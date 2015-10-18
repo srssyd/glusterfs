@@ -1298,5 +1298,18 @@ struct volume_options options[] =
       .description = "time interval for checking the need to self-heal "
                      "in self-heal-daemon"
     },
-    { }
+    {
+            .key = {"coding-threads"},
+            .type = GF_OPTION_TYPE_INT,
+            .min = 1,
+            .max = 1024,
+            .default_value = "1",
+            .description = "This option can be used to determine the number of threads to encode and decode"
+    },
+    {
+            .key = {"coding-cuda"},
+            .type = GF_OPTION_TYPE_BOOL,
+            .default_value = "off",
+            .description = "This option can be used to determine whether to use GPU to encode and decode"
+    }
 };

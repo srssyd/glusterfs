@@ -14,7 +14,7 @@
 #include "ec-gf.h"
 
 /* Determines the maximum size of the matrix used to encode/decode data */
-#define EC_METHOD_MAX_FRAGMENTS 16
+#define EC_METHOD_MAX_FRAGMENTS 64
 /* Determines the maximum number of usable elements in the Galois Field */
 #define EC_METHOD_MAX_NODES     (EC_GF_SIZE - 1)
 
@@ -25,8 +25,17 @@
 
 void ec_method_initialize(void);
 size_t ec_method_encode(size_t size, uint32_t columns, uint32_t row,
-                        uint8_t * in, uint8_t * out);
+                        uint8_t * in, uint8_t * out,int processor_count);
 size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
+                        uint8_t ** in, uint8_t * out,int processor_count);
+size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_row,
+                              uint8_t * in, uint8_t ** out,int processor_count);
+
+
+int64_t ec_method_batch_encode_cuda(size_t size, uint32_t columns, uint32_t total_row,
+                              uint8_t * in, uint8_t ** out);
+int64_t ec_method_decode_cuda(size_t size, uint32_t columns, uint32_t * rows,
                         uint8_t ** in, uint8_t * out);
+
 
 #endif /* __EC_METHOD_H__ */

@@ -19,6 +19,11 @@
 #include "ec-method.h"
 #include "ec.h"
 #include "ec-messages.h"
+#include "ec-method.h"
+
+#include "xlator.h"
+#include "defaults.h"
+
 
 int32_t ec_child_valid(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
 {
@@ -503,6 +508,119 @@ void ec_dispatch_mask(ec_fop_data_t * fop, uintptr_t mask)
     }
 }
 
+void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
+{
+    int32_t i;
+    ec_t * ec = fop->xl->private;
+    xlator_t *this = ec->xl;
+    int32_t count = ec_bits_count(mask);
+    int32_t idx;
+    ssize_t size = 0, bufsize = 0;
+    int32_t err = -ENOMEM;
+
+    struct iobref ** iobref_batch = malloc(sizeof(struct iobref*) *count);
+    struct iobuf ** iobuf_batch = malloc(sizeof(struct iobuf*) *count);
+    uint8_t ** out_ptr = malloc(sizeof(uint8_t *) *count);
+
+    gf_boolean_t use_cuda;
+    int32_t threads=1;
+
+    int32_t ec_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
+                           int32_t op_ret, int32_t op_errno, struct iatt *prestat,
+    struct iatt *poststat, dict_t *xdata);
+
+    LOCK(&fop->lock);
+
+    ec_trace("EXECUTE", fop, "mask=%lX", mask);
+
+    fop->remaining ^= mask;
+
+    fop->winds += count;
+    fop->refs += count;
+
+    UNLOCK(&fop->lock);
+
+    //fop->wind(ec,fop,0);
+
+
+    for(i=0;i<count;i++) {
+        iobref_batch[i] = iobref_new();
+        if (iobref_batch[i] == NULL) {
+            goto out;
+        }
+        size = fop->vector[0].iov_len;
+        bufsize = size / ec->fragments;
+        iobuf_batch[i] = iobuf_get2(fop->xl->ctx->iobuf_pool, bufsize);
+        if (iobuf_batch[i] == NULL) {
+            goto out;
+        }
+        err = iobref_add(iobref_batch[i], iobuf_batch[i]);
+        if (err != 0) {
+            goto out;
+        }
+        out_ptr[i] = iobuf_batch[i]->ptr;
+    }
+
+
+    GF_OPTION_INIT("coding-cuda",use_cuda,bool,out);
+    if(use_cuda) {
+        err = ec_method_batch_encode_cuda(size, ec->fragments, count, fop->vector[0].iov_base,
+                                     out_ptr);
+        if (err < 0)
+            goto out;
+    }
+    else{
+        GF_OPTION_INIT("coding-threads",threads,int32,out);
+
+        ec_method_batch_encode(size, ec->fragments, count, fop->vector[0].iov_base,
+                                    out_ptr,threads);
+    }
+
+    idx = 0;
+    i = 0;
+    while (mask != 0)
+    {
+        if ((mask & 1) != 0)
+        {
+            ec_trace("WIND", fop, "idx=%d", idx);
+
+            struct iovec vector[1];
+
+
+            vector[0].iov_base = iobuf_batch[i]->ptr;
+            vector[0].iov_len = bufsize;
+
+            iobuf_unref(iobuf_batch[i]);
+
+            STACK_WIND_COOKIE(fop->frame, ec_writev_cbk, (void *)(uintptr_t)idx,
+                    ec->xl_list[idx], ec->xl_list[idx]->fops->writev,
+                    fop->fd, vector, 1, fop->offset / ec->fragments,
+                    fop->uint32, iobref_batch[i], fop->xdata);
+
+            iobref_unref(iobref_batch[i]);
+            i++;
+        }
+        idx++;
+        mask >>= 1;
+    }
+    return;
+
+    out:
+        for(i=0;i<count;i++) {
+            if (iobuf_batch[i] != NULL) {
+                iobuf_unref(iobuf_batch[i]);
+            }
+        }
+        for(i=0;i<count;i++) {
+            if (iobref_batch[i] != NULL) {
+                iobref_unref(iobref_batch[i]);
+            }
+        }
+
+    ec_writev_cbk(fop->frame, (void *)(uintptr_t)idx, fop->xl, -1, -err, NULL,
+            NULL, NULL);
+}
+
 void ec_dispatch_start(ec_fop_data_t * fop)
 {
     fop->answer = NULL;
@@ -577,6 +695,20 @@ ec_dispatch_all (ec_fop_data_t *fop)
                 ec_dispatch_mask(fop, fop->remaining);
         }
 }
+
+
+void ec_dispatch_batch(ec_fop_data_t *fop)
+{
+    ec_dispatch_start(fop);
+
+    if (ec_child_select(fop)) {
+        fop->expected = ec_bits_count(fop->remaining);
+        fop->first = 0;
+
+        ec_dispatch_batch_mask(fop, fop->remaining);
+    }
+}
+
 
 void ec_dispatch_min(ec_fop_data_t * fop)
 {

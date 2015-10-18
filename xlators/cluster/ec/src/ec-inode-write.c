@@ -1391,7 +1391,7 @@ void ec_wind_writev(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
     struct iobref * iobref = NULL;
     struct iobuf * iobuf = NULL;
     ssize_t size = 0, bufsize = 0;
-    int32_t err = -ENOMEM;
+    int32_t err = -ENOMEM,threads=1;
 
     iobref = iobref_new();
     if (iobref == NULL) {
@@ -1409,9 +1409,9 @@ void ec_wind_writev(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
     if (err != 0) {
         goto out;
     }
-
+    GF_OPTION_INIT("encode/decode-threads",threads,int32,out);
     ec_method_encode(size, ec->fragments, idx, fop->vector[0].iov_base,
-                     iobuf->ptr);
+                     iobuf->ptr,threads);
 
     vector[0].iov_base = iobuf->ptr;
     vector[0].iov_len = bufsize;
@@ -1438,6 +1438,126 @@ out:
     ec_writev_cbk(fop->frame, (void *)(uintptr_t)idx, fop->xl, -1, -err, NULL,
                   NULL, NULL);
 }
+
+int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
+{
+    ec_cbk_data_t *cbk;
+
+    switch (state)
+    {
+        case EC_STATE_INIT:
+        case EC_STATE_LOCK:
+            ec_lock_prepare_fd(fop, fop->fd,
+                               EC_UPDATE_DATA | EC_UPDATE_META |
+                               EC_QUERY_INFO);
+            ec_lock(fop);
+
+            return EC_STATE_DISPATCH;
+
+        case EC_STATE_DISPATCH:
+            ec_writev_start(fop);
+
+            return EC_STATE_DELAYED_START;
+
+        case EC_STATE_DELAYED_START:
+            ec_dispatch_batch(fop);
+
+            return EC_STATE_PREPARE_ANSWER;
+
+        case EC_STATE_PREPARE_ANSWER:
+            cbk = ec_fop_prepare_answer(fop, _gf_false);
+            if (cbk != NULL) {
+                ec_t *ec = fop->xl->private;
+                size_t size;
+
+                ec_iatt_rebuild(fop->xl->private, cbk->iatt, 2,
+                        cbk->count);
+
+                /* This shouldn't fail because we have the inode locked. */
+                GF_ASSERT(ec_get_inode_size(fop, fop->fd->inode,
+                                            &cbk->iatt[0].ia_size));
+                cbk->iatt[1].ia_size = cbk->iatt[0].ia_size;
+                size = fop->offset + fop->head + fop->user_size;
+                if (size > cbk->iatt[0].ia_size) {
+                    /* Only update inode size if this is a top level fop.
+                     * Otherwise this is an internal write and the top
+                     * level fop should take care of the real inode size.
+                     */
+                    if (fop->parent == NULL) {
+                        /* This shouldn't fail because we have the inode
+                         * locked. */
+                        GF_ASSERT(ec_set_inode_size(fop, fop->fd->inode,
+                                                    size));
+                    }
+                    cbk->iatt[1].ia_size = size;
+                }
+                if (fop->error == 0) {
+                    cbk->op_ret *= ec->fragments;
+                    if (cbk->op_ret < fop->head) {
+                        cbk->op_ret = 0;
+                    } else {
+                        cbk->op_ret -= fop->head;
+                    }
+                    if (cbk->op_ret > fop->user_size) {
+                        cbk->op_ret = fop->user_size;
+                    }
+                }
+            }
+
+            return EC_STATE_REPORT;
+
+        case EC_STATE_REPORT:
+            cbk = fop->answer;
+
+            GF_ASSERT(cbk != NULL);
+
+            if (fop->cbks.writev != NULL)
+            {
+                fop->cbks.writev(fop->req_frame, fop, fop->xl, cbk->op_ret,
+                                 cbk->op_errno, &cbk->iatt[0], &cbk->iatt[1],
+                                 cbk->xdata);
+            }
+
+            return EC_STATE_LOCK_REUSE;
+
+        case -EC_STATE_INIT:
+        case -EC_STATE_LOCK:
+        case -EC_STATE_DISPATCH:
+        case -EC_STATE_DELAYED_START:
+        case -EC_STATE_PREPARE_ANSWER:
+        case -EC_STATE_REPORT:
+            GF_ASSERT(fop->error != 0);
+
+            if (fop->cbks.writev != NULL)
+            {
+                fop->cbks.writev(fop->req_frame, fop, fop->xl, -1, fop->error,
+                                 NULL, NULL, NULL);
+            }
+
+            return EC_STATE_LOCK_REUSE;
+
+        case -EC_STATE_LOCK_REUSE:
+        case EC_STATE_LOCK_REUSE:
+            ec_lock_reuse(fop);
+
+            return EC_STATE_UNLOCK;
+
+        case -EC_STATE_UNLOCK:
+        case EC_STATE_UNLOCK:
+            ec_unlock(fop);
+
+            return EC_STATE_END;
+
+        default:
+            gf_msg (fop->xl->name, GF_LOG_ERROR, EINVAL,
+                    EC_MSG_UNHANDLED_STATE,
+                    "Unhandled state %d for %s",
+                    state, ec_fop_name(fop->id));
+
+            return EC_STATE_END;
+    }
+}
+
 
 int32_t ec_manager_writev(ec_fop_data_t *fop, int32_t state)
 {
@@ -1573,8 +1693,11 @@ void ec_writev(call_frame_t * frame, xlator_t * this, uintptr_t target,
     GF_VALIDATE_OR_GOTO(this->name, frame, out);
     GF_VALIDATE_OR_GOTO(this->name, this->private, out);
 
+    //fop = ec_fop_data_allocate(frame, this, GF_FOP_WRITE, 0, target, minimum,
+    //                           ec_wind_writev, ec_manager_writev, callback,
+    //                           data);
     fop = ec_fop_data_allocate(frame, this, GF_FOP_WRITE, 0, target, minimum,
-                               ec_wind_writev, ec_manager_writev, callback,
+                               ec_wind_writev, ec_manager_batch_writev, callback,
                                data);
     if (fop == NULL) {
         goto out;
@@ -1641,3 +1764,5 @@ out:
         func(frame, NULL, this, -1, error, NULL, NULL, NULL);
     }
 }
+
+
