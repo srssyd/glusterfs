@@ -1,0 +1,12 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+
+Name: libgfdb
+Description: GlusterFS Database Library
+Version: 0.0.1
+Libs: -L${libdir} -lgfchangedb -lglusterfs
+Cflags: -I${includedir}/glusterfs/gfdb
+Requires: sqlite3 

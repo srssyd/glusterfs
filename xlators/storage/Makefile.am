@@ -1,0 +1,7 @@
+SUBDIRS = posix
+
+if ENABLE_BD_XLATOR
+SUBDIRS += bd
+endif
+
+CLEANFILES =

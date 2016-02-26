@@ -1,0 +1,72 @@
+cli/src/input.c:                ret = pthread_create (&state->input, NULL, cli_batch, state);
+cli/src/input.c:                ret = pthread_create (&state->input, NULL, cli_input, state);
+Binary file cli/src/cli-rpc-ops.o matches
+cli/src/cli-rl.c:                ret = pthread_create (&state->input, NULL,
+cli/src/cli-rpc-ops.c:                ret = pthread_create (&th_id, NULL,
+cli/src/cli-rpc-ops.c:                        gf_log ("cli", GF_LOG_ERROR, "pthread_create failed: "
+Binary file cli/src/.libs/gluster matches
+Binary file cli/src/input.o matches
+contrib/qemu/util/qemu-thread-posix.c:    err = pthread_create(&thread->thread, &attr, start_routine, arg);
+contrib/timer-wheel/timer-wheel.c:        ret = pthread_create (&base->runner, NULL, runner, base);
+extras/benchmarking/rdd.c:                ret = pthread_create (&rdd_config.threads[i], NULL,
+extras/benchmarking/rdd.c:                        fprintf (stderr, "pthread_create failed (%s)\n",
+glusterfsd/src/glusterfsd.c:        ret = pthread_create (&ctx->sigwaiter, NULL, glusterfs_sigwaiter,
+Binary file glusterfsd/src/glusterfsd.o matches
+Binary file glusterfsd/src/.libs/glusterfsd matches
+libglusterfs/src/event-epoll.c:                        ret = pthread_create (&t_id, NULL,
+libglusterfs/src/event-epoll.c:                                        ret = pthread_create (&t_id, NULL,
+Binary file libglusterfs/src/.libs/libglusterfs_la-timer-wheel.o matches
+Binary file libglusterfs/src/.libs/libglusterfs_la-common-utils.o matches
+Binary file libglusterfs/src/.libs/libglusterfs.so.0.0.1 matches
+Binary file libglusterfs/src/.libs/libglusterfs_la-event-epoll.o matches
+libglusterfs/src/common-utils.c:        ret = pthread_create (thread, attr, start_routine, arg);
+rpc/rpc-transport/socket/src/socket.h:        OT_SPAWNING,    /* Past pthread_create but not in thread yet. */
+rpc/rpc-transport/socket/src/socket.c:                th_ret = pthread_create (&th_id, NULL, socket_connect_error_cbk,
+rpc/rpc-transport/socket/src/socket.c:                       gf_log (this->name, GF_LOG_ERROR, "pthread_create"
+Binary file rpc/rpc-transport/socket/src/.libs/socket.o matches
+Binary file rpc/rpc-transport/socket/src/.libs/socket.so matches
+tests/bugs/glusterfs-server/bug-905864.c:                pthread_create (&th[i], NULL, random_locker, (void *) &fd);
+tools/gfind_missing_files/gcrawler.c:                ret = pthread_create (&xwork->cthreads[i], NULL,
+Binary file tools/gfind_missing_files/gcrawler.o matches
+Binary file tools/gfind_missing_files/.libs/gcrawler matches
+Binary file xlators/features/quiesce/src/.libs/quiesce.so matches
+Binary file xlators/features/quiesce/src/.libs/quiesce.o matches
+xlators/features/quiesce/src/quiesce.c:                ret = pthread_create (&priv->thr, NULL, gf_quiesce_dequeue_start,
+xlators/features/changelog/src/changelog-rpc.c:        ret = pthread_create (&priv->connector,
+xlators/features/changelog/src/changelog-rpc.c:                ret = pthread_create (&priv->ev_dispatcher[j],
+Binary file xlators/features/changelog/src/.libs/changelog-rpc.o matches
+Binary file xlators/features/changelog/src/.libs/changelog.so matches
+xlators/features/changelog/lib/src/gf-history-changelog.c:                        ret = pthread_create (&th_id[iter], NULL,
+xlators/features/changelog/lib/src/gf-history-changelog.c:                        ret = pthread_create (&consume_th, &attr,
+xlators/features/changelog/lib/src/gf-changelog-journal-handler.c:        ret = pthread_create (&jnl_proc->processor,
+Binary file xlators/features/changelog/lib/src/.libs/libgfchangelog_la-gf-changelog-journal-handler.o matches
+Binary file xlators/features/changelog/lib/src/.libs/libgfchangelog.so.0.0.1 matches
+Binary file xlators/features/changelog/lib/src/.libs/libgfchangelog_la-gf-history-changelog.o matches
+Binary file xlators/features/upcall/src/.libs/upcall-internal.o matches
+Binary file xlators/features/upcall/src/.libs/upcall.so matches
+xlators/features/upcall/src/upcall-internal.c:        ret = pthread_create (&priv->reaper_thr, NULL,
+xlators/nfs/server/src/mount3.c: * _mnt_auth_param_refresh_thread - Started using pthread_create () in
+xlators/nfs/server/src/mount3.c:                pthread_create (&mstate->auth_refresh_thread, NULL,
+xlators/nfs/server/src/mount3.c:                pthread_create (&udp_thread, NULL, mount3udp_thread, nfsx);
+xlators/nfs/server/src/nlm4.c:                        pthread_create (&thr, NULL, nsm_monitor, (void*)caller_name);
+xlators/nfs/server/src/nlm4.c:        pthread_create (&thr, NULL, nsm_thread, (void*)NULL);
+Binary file xlators/nfs/server/src/.libs/nlm4.o matches
+Binary file xlators/nfs/server/src/.libs/mount3.o matches
+Binary file xlators/nfs/server/src/.libs/server.so matches
+Binary file xlators/mgmt/glusterd/src/.libs/glusterd.so matches
+Binary file xlators/mgmt/glusterd/src/.libs/glusterd_la-glusterd-hooks.o matches
+xlators/mgmt/glusterd/src/glusterd-hooks.c:        ret = pthread_create (&hooks_priv->worker, NULL, hooks_worker,
+xlators/cluster/dht/src/tier.c:                        ret_demotion = pthread_create (&demote_thread,
+xlators/cluster/dht/src/tier.c:                        ret_promotion = pthread_create (&promote_thread,
+xlators/cluster/dht/src/dht-rebalance.c:                        err = pthread_create(&(tid[thread_index]), NULL,
+Binary file xlators/cluster/dht/src/.libs/dht-rebalance.o matches
+Binary file xlators/cluster/dht/src/.libs/dht.so matches
+Binary file xlators/cluster/dht/src/.libs/switch.so matches
+Binary file xlators/cluster/dht/src/.libs/nufa.so matches
+xlators/cluster/ec/src/thpool.c:	pthread_create(&(*thread_p)->pthread, NULL, (void *)thread_do, (*thread_p));
+Binary file xlators/cluster/ec/src/.libs/ec.so matches
+Binary file xlators/cluster/ec/src/.libs/thpool.o matches
+xlators/mount/fuse/src/fuse-bridge.c:                                                "pthread_create() failed (%s)",
+Binary file xlators/mount/fuse/src/.libs/fuse-bridge.o matches
+Binary file xlators/mount/fuse/src/.libs/fuse.so matches
+xlators/storage/bd/src/bd-aio.c:        ret = pthread_create (&priv->aiothread, NULL,
