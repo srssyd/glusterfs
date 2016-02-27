@@ -73,6 +73,7 @@ class GLogger(Logger):
         logging.setLoggerClass(cls)
         logging.getLogger().handlers = []
         logging.getLogger().setLevel(lprm['level'])
+        logging.Formatter.converter = time.gmtime  # Log in GMT/UTC time
 
         if 'filename' in lprm:
             try:
@@ -247,6 +248,7 @@ def main_i():
     op.add_option(
         '--local-path', metavar='PATH', help=SUPPRESS_HELP, default='')
     op.add_option('-s', '--ssh-command', metavar='CMD', default='ssh')
+    op.add_option('--ssh-port', metavar='PORT', type=int, default=22)
     op.add_option('--ssh-command-tar', metavar='CMD', default='ssh')
     op.add_option('--rsync-command', metavar='CMD', default='rsync')
     op.add_option('--rsync-options', metavar='OPTS', default='')
@@ -304,7 +306,7 @@ def main_i():
     op.add_option('--feedback-fd', dest='feedback_fd', type=int,
                   help=SUPPRESS_HELP, action='callback', callback=store_local)
     op.add_option('--rpc-fd', dest='rpc_fd', type=str, help=SUPPRESS_HELP)
-    op.add_option('--subvol-num', dest='subvol_num', type=int,
+    op.add_option('--subvol-num', dest='subvol_num', type=str,
                   help=SUPPRESS_HELP)
     op.add_option('--listen', dest='listen', help=SUPPRESS_HELP,
                   action='callback', callback=store_local_curry(True))
@@ -356,6 +358,7 @@ def main_i():
                   action='callback', callback=store_local_curry('canon'))
     op.add_option('--canonicalize-escape-url', dest='url_print',
                   action='callback', callback=store_local_curry('canon_esc'))
+    op.add_option('--is-hottier', default=False, action='store_true')
 
     tunables = [norm(o.get_opt_string()[2:])
                 for o in op.option_list

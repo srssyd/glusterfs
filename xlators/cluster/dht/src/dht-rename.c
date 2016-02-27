@@ -362,6 +362,7 @@ dht_rename_track_for_changelog (xlator_t *this, dict_t *xattr,
                         oldloc->name);
                 GF_FREE (info);
         }
+
         return ret;
 }
 
@@ -906,6 +907,8 @@ dht_do_rename (call_frame_t *frame)
         STACK_WIND (frame, dht_rename_cbk,
                     rename_subvol, rename_subvol->fops->rename,
                     &local->loc, &local->loc2, dict);
+        if (dict)
+                dict_unref (dict);
 
         return 0;
 }
@@ -958,11 +961,9 @@ dht_rename_linkto_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         xlator_t        *src_cached = NULL;
         dict_t          *xattr = NULL;
 
-        DHT_MARK_FOP_INTERNAL (xattr);
-
         local = frame->local;
+        DHT_MARK_FOP_INTERNAL (xattr);
         prev = cookie;
-
         src_cached = local->src_cached;
 
         if (op_ret == -1) {
@@ -1085,6 +1086,9 @@ dht_rename_create_links (call_frame_t *frame)
 			    &local->loc2, 0, xattr_new);
 
                 dict_unref (xattr_new);
+                if (xattr)
+                        dict_unref (xattr);
+
                 return 0;
         }
 
@@ -1185,7 +1189,7 @@ dht_rename_lookup_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         if (is_last_call (call_cnt)) {
                 if (local->is_linkfile) {
                         local->op_ret = -1;
-                        local->op_errno = EBUSY;
+                        local->op_errno = op_errno;
                         goto fail;
                 }
 
@@ -1221,13 +1225,13 @@ dht_rename_lock_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                 gf_msg (this->name, GF_LOG_WARNING, op_errno,
                         DHT_MSG_INODE_LK_ERROR,
                         "acquiring inodelk failed "
-                        "rename (%s:%s:%s %s:%s:%s), returning EBUSY",
+                        "rename (%s:%s:%s %s:%s:%s)",
                         local->loc.path, src_gfid, local->src_cached->name,
                         local->loc2.path, dst_gfid,
                         local->dst_cached ? local->dst_cached->name : NULL);
 
                 local->op_ret = -1;
-                local->op_errno = (op_errno == EAGAIN) ? EBUSY : op_errno;
+                local->op_errno = op_errno;
 
                 goto done;
         }
@@ -1303,8 +1307,8 @@ dht_rename_lock (call_frame_t *frame)
         local->lock.locks = lk_array;
         local->lock.lk_count = count;
 
-        ret = dht_nonblocking_inodelk (frame, lk_array, count,
-                                       dht_rename_lock_cbk);
+        ret = dht_blocking_inodelk (frame, lk_array, count,
+                                    dht_rename_lock_cbk);
         if (ret < 0) {
                 local->lock.locks = NULL;
                 local->lock.lk_count = 0;

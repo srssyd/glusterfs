@@ -49,6 +49,7 @@ glusterd_handle_replicate_replace_brick (glusterd_volinfo_t *volinfo,
         runner_t                   runner            = {0};
         glusterd_conf_t           *priv              = NULL;
         char                      *pid               = NULL;
+        char                      *volfileserver     = NULL;
 
         priv = THIS->private;
 
@@ -74,13 +75,17 @@ glusterd_handle_replicate_replace_brick (glusterd_volinfo_t *volinfo,
                   DEFAULT_LOG_FILE_DIRECTORY"/%s-replace-brick-mount.log",
                   volinfo->volname);
 
-        ret = gf_asprintf (&pid, "%d", GF_CLIENT_PID_AFR_SELF_HEALD);
+        ret = gf_asprintf (&pid, "%d", GF_CLIENT_PID_SELF_HEALD);
         if (ret < 0)
                 goto out;
 
+        if (dict_get_str (THIS->options, "transport.socket.bind-address",
+                          &volfileserver) != 0)
+                volfileserver = "localhost";
+
         runinit (&runner);
         runner_add_args (&runner, SBIN_DIR"/glusterfs",
-                         "-s", "localhost",
+                         "-s", volfileserver,
                          "--volfile-id", volinfo->volname,
                          "--client-pid", pid,
                          "-l", logfile, tmpmount, NULL);
@@ -261,6 +266,7 @@ glusterd_op_stage_replace_brick (dict_t *dict, char **op_errstr,
         xlator_t                                *this               = NULL;
         gf_boolean_t                             is_force           = _gf_false;
         gsync_status_param_t                     param              = {0,};
+        char                                    *c                  = NULL;
 
         this = THIS;
         GF_ASSERT (this);
@@ -412,8 +418,18 @@ glusterd_op_stage_replace_brick (dict_t *dict, char **op_errstr,
                         GD_MSG_NO_MEMORY, "Memory allocation failed");
                 goto out;
         }
-        host = strtok_r (dup_dstbrick, ":", &savetok);
-        path = strtok_r (NULL, ":", &savetok);
+
+        /*
+         * IPv4 address contains '.' and ipv6 addresses contains ':'
+         * So finding the last occurance of ':' to
+         * mark the start of brick path
+         */
+        c = strrchr(dup_dstbrick, ':');
+        if (c != NULL) {
+                c[0] = '\0';
+                host = dup_dstbrick;
+                path = c++;
+        }
 
         if (!host || !path) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,

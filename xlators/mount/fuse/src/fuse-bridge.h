@@ -39,10 +39,9 @@
 #include "dict.h"
 #include "syncop.h"
 #include "gidcache.h"
-#include "../../../../libglusterfs/src/xlator.h"
 
 #if defined(GF_LINUX_HOST_OS) || defined(__FreeBSD__) || defined(__NetBSD__)
-#define FUSE_OP_HIGH (FUSE_READDIRPLUS + 1)
+#define FUSE_OP_HIGH (FUSE_LSEEK + 1)
 #endif
 #ifdef GF_DARWIN_HOST_OS
 #define FUSE_OP_HIGH (FUSE_DESTROY + 1)
@@ -56,95 +55,103 @@ typedef void (fuse_handler_t) (xlator_t *this, fuse_in_header_t *finh,
                                void *msg);
 
 struct fuse_private {
-    int                  fd;
-    uint32_t             proto_minor;
-    char                *volfile;
-    size_t               volfile_size;
-    char                *mount_point;
-    struct iobuf        *iobuf;
+        int                  fd;
+        uint32_t             proto_minor;
+        char                *volfile;
+        size_t               volfile_size;
+        char                *mount_point;
+        struct iobuf        *iobuf;
 
-    pthread_t            fuse_thread;
-    char                 fuse_thread_started;
+        pthread_t            fuse_thread;
+        char                 fuse_thread_started;
 
-    uint32_t             direct_io_mode;
-    size_t              *msg0_len_p;
+        uint32_t             direct_io_mode;
+        size_t              *msg0_len_p;
 
-    double               entry_timeout;
-    double               negative_timeout;
-    double               attribute_timeout;
+        double               entry_timeout;
+        double               negative_timeout;
+        double               attribute_timeout;
 
-    pthread_cond_t       sync_cond;
-    pthread_mutex_t      sync_mutex;
-    char                 event_recvd;
+        pthread_cond_t       sync_cond;
+        pthread_mutex_t      sync_mutex;
+        char                 event_recvd;
 
-    char                 init_recvd;
+        char                 init_recvd;
 
-    gf_boolean_t         strict_volfile_check;
+        gf_boolean_t         strict_volfile_check;
 
-    fuse_handler_t     **fuse_ops;
-    fuse_handler_t     **fuse_ops0;
-    pthread_mutex_t      fuse_dump_mutex;
-    int                  fuse_dump_fd;
+        fuse_handler_t     **fuse_ops;
+        fuse_handler_t     **fuse_ops0;
+        pthread_mutex_t      fuse_dump_mutex;
+        int                  fuse_dump_fd;
 
-    glusterfs_graph_t   *next_graph;
-    xlator_t            *active_subvol;
+        glusterfs_graph_t   *next_graph;
+        xlator_t            *active_subvol;
 
-    pid_t                client_pid;
-    gf_boolean_t         client_pid_set;
-    unsigned             uid_map_root;
-    gf_boolean_t         acl;
-    gf_boolean_t         selinux;
-    gf_boolean_t         read_only;
-    int32_t	             fopen_keep_cache;
-    int32_t		     gid_cache_timeout;
-    gf_boolean_t         enable_ino32;
-    /* This is the mount option for disabling the root-squash for the
-       mount irrespective of whether the root-squash option for the
-       volume is set or not. But this option is honoured only for
-       thr trusted clients. For non trusted clients this value does
-       not have any affect and the volume option for root-squash is
-       honoured.
-    */
-    gf_boolean_t        no_root_squash;
-    fdtable_t           *fdtable;
-    gid_cache_t	     gid_cache;
-    char                *fuse_mountopts;
+        pid_t                client_pid;
+        gf_boolean_t         client_pid_set;
+        unsigned             uid_map_root;
+        gf_boolean_t         acl;
+        gf_boolean_t         selinux;
+        gf_boolean_t         read_only;
+	int32_t	             fopen_keep_cache;
+	int32_t		     gid_cache_timeout;
+        gf_boolean_t         enable_ino32;
+        /* This is the mount option for disabling the root-squash for the
+           mount irrespective of whether the root-squash option for the
+           volume is set or not. But this option is honoured only for
+           thr trusted clients. For non trusted clients this value does
+           not have any affect and the volume option for root-squash is
+           honoured.
+        */
+        gf_boolean_t        no_root_squash;
+        fdtable_t           *fdtable;
+	gid_cache_t	     gid_cache;
+        char                *fuse_mountopts;
 
-    /* For fuse-reverse-validation */
-    int                  revchan_in;
-    int                  revchan_out;
-    gf_boolean_t         reverse_fuse_thread_started;
+        /* For fuse-reverse-validation */
+        struct list_head     invalidate_list;
+        pthread_cond_t       invalidate_cond;
+        pthread_mutex_t      invalidate_mutex;
+        gf_boolean_t         reverse_fuse_thread_started;
 
-    /* For communicating with separate mount thread. */
-    int                  status_pipe[2];
+        /* For communicating with separate mount thread. */
+        int                  status_pipe[2];
 
-    /* for fuse queue length and congestion threshold */
-    int background_qlen;
-    int congestion_threshold;
+        /* for fuse queue length and congestion threshold */
+        int background_qlen;
+        int congestion_threshold;
 
-    /* for using fuse-kernel readdirp*/
-    gf_boolean_t use_readdirp;
+        /* for using fuse-kernel readdirp*/
+        gf_boolean_t use_readdirp;
 
-    /* fini started, helps prevent multiple epoll worker threads
-     * firing up the fini routine */
-    gf_boolean_t fini_invoked;
+        /* fini started, helps prevent multiple epoll worker threads
+         * firing up the fini routine */
+        gf_boolean_t fini_invoked;
 
-    /* resolve gid with getgrouplist() instead of /proc/%d/status */
-    gf_boolean_t resolve_gids;
+        /* resolve gid with getgrouplist() instead of /proc/%d/status */
+        gf_boolean_t resolve_gids;
 };
 typedef struct fuse_private fuse_private_t;
-
-struct fuse_graph_switch_args {
-    xlator_t        *this;
-    xlator_t        *old_subvol;
-    xlator_t        *new_subvol;
-};
-typedef struct fuse_graph_switch_args fuse_graph_switch_args_t;
 
 #define INVAL_BUF_SIZE (sizeof (struct fuse_out_header) +               \
                         max (sizeof (struct fuse_notify_inval_inode_out), \
                              sizeof (struct fuse_notify_inval_entry_out) + \
                              NAME_MAX + 1))
+
+
+struct fuse_invalidate_node {
+        char             inval_buf[INVAL_BUF_SIZE];
+        struct list_head next;
+};
+typedef struct fuse_invalidate_node fuse_invalidate_node_t;
+
+struct fuse_graph_switch_args {
+        xlator_t        *this;
+        xlator_t        *old_subvol;
+        xlator_t        *new_subvol;
+};
+typedef struct fuse_graph_switch_args fuse_graph_switch_args_t;
 
 #define FUSE_EVENT_HISTORY_SIZE 1024
 
@@ -298,94 +305,96 @@ typedef struct fuse_graph_switch_args fuse_graph_switch_args_t;
 static inline xlator_t *
 fuse_active_subvol (xlator_t *fuse)
 {
-    fuse_private_t *priv = NULL;
+        fuse_private_t *priv = NULL;
 
-    priv = fuse->private;
+        priv = fuse->private;
 
-    return priv->active_subvol;
+        return priv->active_subvol;
 }
 
 
 typedef enum {
-    RESOLVE_MUST = 1,
-    RESOLVE_NOT,
-    RESOLVE_MAY,
-    RESOLVE_DONTCARE,
-    RESOLVE_EXACT
+        RESOLVE_MUST = 1,
+        RESOLVE_NOT,
+        RESOLVE_MAY,
+        RESOLVE_DONTCARE,
+        RESOLVE_EXACT
 } fuse_resolve_type_t;
 
 
 typedef struct {
-    fuse_resolve_type_t    type;
-    fd_t                  *fd;
-    char                  *path;
-    char                  *bname;
-    u_char                 gfid[16];
-    inode_t               *hint;
-    u_char                 pargfid[16];
-    inode_t               *parhint;
-    int                    op_ret;
-    int                    op_errno;
-    loc_t                  resolve_loc;
+        fuse_resolve_type_t    type;
+        fd_t                  *fd;
+        char                  *path;
+        char                  *bname;
+        u_char                 gfid[16];
+	inode_t               *hint;
+        u_char                 pargfid[16];
+	inode_t               *parhint;
+        int                    op_ret;
+        int                    op_errno;
+        loc_t                  resolve_loc;
 } fuse_resolve_t;
 
 
 typedef struct {
-    void             *pool;
-    xlator_t         *this;
-    xlator_t         *active_subvol;
-    inode_table_t    *itable;
-    loc_t             loc;
-    loc_t             loc2;
-    fuse_in_header_t *finh;
-    int32_t           flags;
-    off_t             off;
-    size_t            size;
-    unsigned long     nlookup;
-    fd_t             *fd;
-    dict_t           *xattr;
-    dict_t           *xdata;
-    char             *name;
-    char              is_revalidate;
-    gf_boolean_t      truncate_needed;
-    gf_lock_t         lock;
-    uint64_t          lk_owner;
+        void             *pool;
+        xlator_t         *this;
+	xlator_t         *active_subvol;
+        inode_table_t    *itable;
+        loc_t             loc;
+        loc_t             loc2;
+        fuse_in_header_t *finh;
+        int32_t           flags;
+        off_t             off;
+        size_t            size;
+        unsigned long     nlookup;
+        fd_t             *fd;
+        dict_t           *xattr;
+        dict_t           *xdata;
+        char             *name;
+        char              is_revalidate;
+        gf_boolean_t      truncate_needed;
+        gf_lock_t         lock;
+        uint64_t          lk_owner;
 
-    /* used within resolve_and_resume */
-    /* */
-    fuse_resolve_t resolve;
-    fuse_resolve_t resolve2;
+        /* used within resolve_and_resume */
+        /* */
+        fuse_resolve_t resolve;
+        fuse_resolve_t resolve2;
 
-    loc_t        *loc_now;
-    fuse_resolve_t *resolve_now;
+        loc_t        *loc_now;
+        fuse_resolve_t *resolve_now;
 
-    void *resume_fn;
+        void *resume_fn;
 
-    int            valid;
-    int            mask;
-    dev_t          rdev;
-    mode_t         mode;
-    mode_t         umask;
-    struct iatt    attr;
-    struct gf_flock   lk_lock;
-    struct iovec   vector;
+        int            valid;
+        int            mask;
+        dev_t          rdev;
+        mode_t         mode;
+        mode_t         umask;
+        struct iatt    attr;
+        struct gf_flock   lk_lock;
+        struct iovec   vector;
 
-    uuid_t         gfid;
-    uint32_t       io_flags;
-    int32_t        fd_no;
+        uuid_t         gfid;
+        uint32_t       io_flags;
+        int32_t        fd_no;
+
+        gf_seek_what_t whence;
 } fuse_state_t;
 
 typedef struct {
-    uint32_t  open_flags;
-    char      migration_failed;
-    fd_t     *activefd;
+        uint32_t  open_flags;
+        char      migration_failed;
+        fd_t     *activefd;
 } fuse_fd_ctx_t;
 
 typedef void (*fuse_resume_fn_t) (fuse_state_t *state);
 
 GF_MUST_CHECK int32_t
 fuse_loc_fill (loc_t *loc, fuse_state_t *state, ino_t ino,
-ino_t par, const char *name);
+               ino_t par, const char *name);
 call_frame_t *get_call_frame_for_req (fuse_state_t *state);
 fuse_state_t *get_fuse_state (xlator_t *this, fuse_in_header_t *finh);
 void free_fuse_state (fuse_state_t *state);
@@ -404,11 +413,11 @@ fuse_fd_ctx_t * fuse_fd_ctx_check_n_create (xlator_t *this, fd_t *fd);
 
 int fuse_resolve_and_resume (fuse_state_t *state, fuse_resume_fn_t fn);
 int fuse_resolve_inode_init (fuse_state_t *state, fuse_resolve_t *resolve,
-                             ino_t ino);
+			     ino_t ino);
 int fuse_resolve_entry_init (fuse_state_t *state, fuse_resolve_t *resolve,
-                             ino_t par, char *name);
+			     ino_t par, char *name);
 int fuse_resolve_fd_init (fuse_state_t *state, fuse_resolve_t *resolve,
-                          fd_t *fd);
+			  fd_t *fd);
 int fuse_ignore_xattr_set (fuse_private_t *priv, char *key);
 void fuse_fop_resume (fuse_state_t *state);
 int dump_history_fuse (circular_buffer_t *cb, void *data);

@@ -12,6 +12,7 @@
 #define _GLOBALS_H
 
 #define GF_DEFAULT_BASE_PORT 24007
+#define GF_DEFAULT_VOLFILE_TRANSPORT "tcp"
 
 #define GD_OP_VERSION_KEY     "operating-version"
 #define GD_MIN_OP_VERSION_KEY "minimum-operating-version"
@@ -37,7 +38,7 @@
  */
 #define GD_OP_VERSION_MIN  1 /* MIN is the fresh start op-version, mostly
                                 should not change */
-#define GD_OP_VERSION_MAX  GD_OP_VERSION_3_8_0 /* MAX VERSION is the maximum
+#define GD_OP_VERSION_MAX  GD_OP_VERSION_4_0_0 /* MAX VERSION is the maximum
                                                   count in VME table, should
                                                   keep changing with
                                                   introduction of newer
@@ -55,7 +56,13 @@
 
 #define GD_OP_VERSION_3_7_4    30704 /* Op-version for GlusterFS 3.7.4 */
 
-#define GD_OP_VERSION_3_8_0    30800 /* Op-version for GlusterFS 3.8.0 */
+#define GD_OP_VERSION_3_7_5    30705 /* Op-version for GlusterFS 3.7.5 */
+
+#define GD_OP_VERSION_3_7_6    30706 /* Op-version for GlusterFS 3.7.6 */
+
+#define GD_OP_VERSION_3_7_7    30707 /* Op-version for GlusterFS 3.7.7 */
+
+#define GD_OP_VERSION_4_0_0    40000 /* Op-version for GlusterFS 4.0.0 */
 
 #define GD_OP_VER_PERSISTENT_AFR_XATTRS GD_OP_VERSION_3_6_0
 

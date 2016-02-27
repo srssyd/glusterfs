@@ -4,20 +4,33 @@
 # i.e. where we are interested in the result of a command,
 # we have to run the command in an if-statement.
 
+
+while getopts "v" opt; do
+    case $opt in
+        v)
+            # Verbose mode
+            git () { >&2 echo "git $@" && `which git` $@; }
+            ;;
+    esac
+done
+# Move the positional arguments to the beginning
+shift $((OPTIND-1))
+
+
 branch="master";
 
 set_hooks_commit_msg()
 {
     f=".git/hooks/commit-msg";
-    u="http://review.gluster.com/tools/hooks/commit-msg";
+    u="http://review.gluster.org/tools/hooks/commit-msg";
 
     if [ -x "$f" ]; then
         return;
     fi
 
-    curl -o $f $u || wget -O $f $u;
+    curl -L -o $f $u || wget -O $f $u;
 
-    chmod +x .git/hooks/commit-msg;
+    chmod +x $f
 
     # Let the 'Change-Id: ' header get assigned on first run of rfc.sh
     GIT_EDITOR=true git commit --amend;

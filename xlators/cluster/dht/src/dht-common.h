@@ -16,6 +16,7 @@
 #include "libxlator.h"
 #include "syncop.h"
 #include "refcount.h"
+#include "timer.h"
 
 #ifndef _DHT_H
 #define _DHT_H
@@ -37,7 +38,7 @@ typedef int (*dht_selfheal_dir_cbk_t) (call_frame_t *frame, void *cookie,
                                        int32_t       op_ret, int32_t op_errno,
                                        dict_t       *xdata);
 typedef int (*dht_defrag_cbk_fn_t) (xlator_t        *this, xlator_t *dst_node,
-                                    call_frame_t    *frame);
+                                    call_frame_t    *frame, int ret);
 
 typedef int (*dht_refresh_layout_unlock) (call_frame_t *frame, xlator_t *this,
                                          int op_ret);
@@ -116,8 +117,12 @@ struct dht_rebalance_ {
         struct iobref       *iobref;
         struct iovec        *vector;
         struct iatt          stbuf;
+        struct iatt          prebuf;
+        struct iatt          postbuf;
         dht_defrag_cbk_fn_t  target_op_fn;
         dict_t              *xdata;
+        dict_t              *xattr;
+        int32_t              set;
 };
 
 /**
@@ -289,7 +294,8 @@ enum gf_defrag_type {
         GF_DEFRAG_CMD_STATUS_TIER = 1 + 6,
 	GF_DEFRAG_CMD_START_DETACH_TIER = 1 + 7,
 	GF_DEFRAG_CMD_STOP_DETACH_TIER = 1 + 8,
-
+	GF_DEFRAG_CMD_PAUSE_TIER = 1 + 9,
+	GF_DEFRAG_CMD_RESUME_TIER = 1 + 10,
 };
 typedef enum gf_defrag_type gf_defrag_type;
 
@@ -328,6 +334,41 @@ struct dht_container {
         dict_t          *migrate_data;
 };
 
+typedef enum tier_mode_ {
+        TIER_MODE_NONE = 0,
+        TIER_MODE_TEST,
+        TIER_MODE_WM
+} tier_mode_t;
+
+typedef enum tier_pause_state_ {
+        TIER_RUNNING = 0,
+        TIER_REQUEST_PAUSE,
+        TIER_PAUSED
+} tier_pause_state_t;
+
+typedef struct gf_tier_conf {
+        int                          is_tier;
+        int                          watermark_hi;
+        int                          watermark_low;
+        int                          watermark_last;
+        fsblkcnt_t                   blocks_total;
+        fsblkcnt_t                   blocks_used;
+        int                          percent_full;
+        uint64_t                     max_migrate_bytes;
+        int                          max_migrate_files;
+        tier_mode_t                  mode;
+        int                          tier_promote_frequency;
+        int                          tier_demote_frequency;
+        uint64_t                     st_last_promoted_size;
+        uint64_t                     st_last_demoted_size;
+        tier_pause_state_t           pause_state;
+        struct synctask             *pause_synctask;
+        gf_timer_t                  *pause_timer;
+        pthread_mutex_t              pause_mutex;
+        int                          promote_in_progress;
+        int                          demote_in_progress;
+} gf_tier_conf_t;
+
 struct gf_defrag_info_ {
         uint64_t                     total_files;
         uint64_t                     total_data;
@@ -348,8 +389,7 @@ struct gf_defrag_info_ {
         gf_boolean_t                 stats;
         uint32_t                     new_commit_hash;
         gf_defrag_pattern_list_t    *defrag_pattern;
-        int                          tier_promote_frequency;
-        int                          tier_demote_frequency;
+        gf_tier_conf_t               tier_conf;
 
         /*Data Tiering params for scanner*/
         uint64_t                     total_files_promoted;
@@ -401,7 +441,7 @@ struct dht_conf {
         int           *last_event;
         dht_layout_t **file_layouts;
         dht_layout_t **dir_layouts;
-        gf_boolean_t   search_unhashed;
+        unsigned int   search_unhashed;
         gf_boolean_t   lookup_optimize;
         int            gen;
         dht_du_t      *du_stats;
@@ -453,7 +493,7 @@ struct dht_conf {
         gf_boolean_t    randomize_by_gfid;
         char           *dthrottle;
 
-        dht_methods_t  *methods;
+        dht_methods_t   methods;
 
         struct mem_pool *lock_pool;
 
@@ -514,6 +554,13 @@ typedef struct dht_migrate_info {
 } dht_migrate_info_t;
 
 
+
+typedef struct dht_fd_ctx {
+        uint64_t opened_on_dst;
+        GF_REF_DECL;
+} dht_fd_ctx_t;
+
+
 #define ENTRY_MISSING(op_ret, op_errno) (op_ret == -1 && op_errno == ENOENT)
 
 #define is_revalidate(loc) (dht_inode_ctx_layout_get (loc->inode, this, NULL) == 0)
@@ -547,6 +594,8 @@ typedef struct dht_migrate_info {
 #define check_is_dir(i,s,x) (IA_ISDIR(s->ia_type))
 
 #define layout_is_sane(layout) ((layout) && (layout->cnt > 0))
+
+#define we_are_not_migrating(x)   ((x) == 1)
 
 #define DHT_STACK_UNWIND(fop, frame, params ...) do {           \
                 dht_local_t *__local = NULL;                    \
@@ -953,6 +1002,21 @@ int dht_newfile_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 int
 gf_defrag_status_get (gf_defrag_info_t *defrag, dict_t *dict);
 
+void
+gf_defrag_set_pause_state (gf_tier_conf_t *tier_conf, tier_pause_state_t state);
+
+tier_pause_state_t
+gf_defrag_get_pause_state (gf_tier_conf_t *tier_conf);
+
+int
+gf_defrag_pause_tier (xlator_t *this, gf_defrag_info_t *defrag);
+
+tier_pause_state_t
+gf_defrag_check_pause_tier (gf_tier_conf_t *defrag);
+
+int
+gf_defrag_resume_tier (xlator_t *this, gf_defrag_info_t *defrag);
+
 int
 gf_defrag_start_detach_tier (gf_defrag_info_t *defrag);
 
@@ -1069,13 +1133,38 @@ int
 dht_layout_sort (dht_layout_t *layout);
 
 int
+dht_heal_full_path (void *data);
+
+int
+dht_heal_full_path_done (int op_ret, call_frame_t *frame, void *data);
+
+int
 dht_layout_missing_dirs (dht_layout_t *layout);
 
 int
 dht_refresh_layout (call_frame_t *frame);
 
+gf_boolean_t
+dht_is_tier_xlator (xlator_t *this);
+
 int
 dht_build_parent_loc (xlator_t *this, loc_t *parent, loc_t *child,
                                                  int32_t *op_errno);
 
+int32_t
+dht_set_local_rebalance (xlator_t *this, dht_local_t *local,
+                         struct iatt *stbuf,
+                         struct iatt *prebuf,
+                         struct iatt *postbuf, dict_t *xdata);
+void
+dht_build_root_loc (inode_t *inode, loc_t *loc);
+
+gf_boolean_t
+dht_fd_open_on_dst (xlator_t *this, fd_t *fd, xlator_t *dst);
+
+int32_t
+dht_fd_ctx_destroy (xlator_t *this, fd_t *fd);
+
+int32_t
+dht_release (xlator_t *this, fd_t *fd);
 #endif/* _DHT_H */

@@ -1085,12 +1085,14 @@ cli_cmd_quota_parse (const char **words, int wordcount, dict_t **options)
 
                 if (type == GF_QUOTA_OPTION_TYPE_LIMIT_USAGE) {
                         ret = gf_string2bytesize_int64 (words[5], &value);
-                        if (ret != 0 || value < 0) {
-                                if (errno == ERANGE || value < 0)
-                                        cli_err ("Value out of range "
-                                                 "(0 - %"PRId64 "): %s",
-                                                 INT64_MAX, words[5]);
-                                else
+                        if (ret != 0 || value <= 0) {
+                                if (errno == ERANGE || value <= 0) {
+                                        ret = -1;
+                                        cli_err ("Please enter an integer "
+                                                 "value in the range of "
+                                                 "(1 - %"PRId64 ")",
+                                                 INT64_MAX);
+                                } else
                                         cli_err ("Please enter a correct "
                                                  "value");
                                 goto out;
@@ -1101,7 +1103,7 @@ cli_cmd_quota_parse (const char **words, int wordcount, dict_t **options)
                         if (errno == ERANGE || errno == EINVAL || limit <= 0
                                             || strcmp (end_ptr, "") != 0) {
                                 ret = -1;
-                                cli_err ("Please enter an interger value in "
+                                cli_err ("Please enter an integer value in "
                                          "the range 1 - %"PRId64, INT64_MAX);
                                 goto out;
                         }
@@ -1696,9 +1698,9 @@ cli_cmd_volume_tier_parse (const char **words, int wordcount,
 {
         dict_t  *dict    = NULL;
         char    *volname = NULL;
-        char    *word    = NULL;
         int      ret     = -1;
         int32_t  command = GF_OP_CMD_NONE;
+        int32_t  is_force    = 0;
 
         GF_ASSERT (words);
         GF_ASSERT (options);
@@ -1708,7 +1710,7 @@ cli_cmd_volume_tier_parse (const char **words, int wordcount,
         if (!dict)
                 goto out;
 
-        if (wordcount != 4) {
+        if (!(wordcount == 4 || wordcount == 5)) {
                 gf_log ("cli", GF_LOG_ERROR, "Invalid Syntax");
                 ret = -1;
                 goto out;
@@ -1730,11 +1732,28 @@ cli_cmd_volume_tier_parse (const char **words, int wordcount,
                 goto out;
 
         volname = (char *)words[2];
-
-        word = (char *)words[3];
-        if (!strcmp(word, "status"))
-                command = GF_DEFRAG_CMD_STATUS_TIER;
-        else {
+        if (wordcount == 4) {
+                if (!strcmp(words[3], "status"))
+                        command = GF_DEFRAG_CMD_STATUS_TIER;
+                else if (!strcmp(words[3], "start"))
+                        command = GF_DEFRAG_CMD_START_TIER;
+                else {
+                        ret = -1;
+                        goto out;
+                }
+        } else if (wordcount == 5) {
+                if ((!strcmp (words[3], "start")) &&
+                    (!strcmp (words[4], "force"))) {
+                        command = GF_DEFRAG_CMD_START_TIER;
+                        is_force = 1;
+                        ret = dict_set_int32 (dict, "force", is_force);
+                        if (ret)
+                                goto out;
+                } else {
+                        ret = -1;
+                        goto out;
+                }
+        } else {
                 ret = -1;
                 goto out;
         }
@@ -1757,7 +1776,7 @@ out:
 
 int32_t
 cli_cmd_volume_detach_tier_parse (const char **words, int wordcount,
-                                  dict_t **options)
+                                  dict_t **options, int *question)
 {
         int      ret = -1;
         char    *word = NULL;
@@ -1777,19 +1796,9 @@ cli_cmd_volume_detach_tier_parse (const char **words, int wordcount,
                 return -1;
         }
 
-        if (!((wordcount == 4) || (wordcount == 5))) {
+        if (wordcount != 4) {
                 ret = -1;
                 goto out;
-        }
-
-        if (wordcount == 5) {
-                word = (char *)words[4];
-                if (!strcmp(word, "force"))
-                        force = 1;
-                else {
-                        ret = -1;
-                        goto out;
-                }
         }
 
         word = (char *)words[3];
@@ -1799,10 +1808,11 @@ cli_cmd_volume_detach_tier_parse (const char **words, int wordcount,
         if (!strcmp(word, "start")) {
                 command = GF_OP_CMD_DETACH_START;
         } else if (!strcmp(word, "commit")) {
-                if (force)
-                        command = GF_OP_CMD_DETACH_COMMIT_FORCE;
-                else
-                        command = GF_OP_CMD_DETACH_COMMIT;
+                *question = 1;
+                command = GF_OP_CMD_DETACH_COMMIT;
+        } else if (!strcmp(word, "force")) {
+                *question = 1;
+                command = GF_OP_CMD_DETACH_COMMIT_FORCE;
         } else if (!strcmp(word, "stop"))
                 command = GF_OP_CMD_STOP_DETACH_TIER;
         else if (!strcmp(word, "status"))
@@ -2412,6 +2422,51 @@ out:
         return ret;
 }
 
+/* ssh_port_parse: Parses and validates when ssh_port is given.
+ *                 ssh_index refers to index of ssh_port and
+ *                 type refers to either push-pem or no-verify
+ */
+
+static int32_t
+parse_ssh_port (const char **words, int wordcount, dict_t *dict,
+                unsigned *cmdi, int ssh_index, char *type) {
+
+        int        ret         = 0;
+        char      *end_ptr     = NULL;
+        int64_t    limit       = 0;
+
+        if (!strcmp ((char *)words[ssh_index], "ssh-port")) {
+                if (strcmp ((char *)words[ssh_index-1], "create")) {
+                        ret = -1;
+                        goto out;
+                }
+                (*cmdi)++;
+                limit = strtol (words[ssh_index+1], &end_ptr, 10);
+                if (errno == ERANGE || errno == EINVAL || limit <= 0
+                                    || strcmp (end_ptr, "") != 0) {
+                        ret = -1;
+                        cli_err ("Please enter an interger value for ssh_port ");
+                        goto out;
+                }
+
+                ret = dict_set_int32 (dict, "ssh_port", limit);
+                if (ret)
+                        goto out;
+                (*cmdi)++;
+        } else if (strcmp ((char *)words[ssh_index+1], "create")) {
+                ret = -1;
+                goto out;
+        }
+
+        ret = dict_set_int32 (dict, type, 1);
+        if (ret)
+                goto out;
+        (*cmdi)++;
+
+ out:
+        return ret;
+}
+
 static int32_t
 force_push_pem_no_verify_parse (const char **words, int wordcount,
                       dict_t *dict, unsigned *cmdi)
@@ -2436,44 +2491,26 @@ force_push_pem_no_verify_parse (const char **words, int wordcount,
                 (*cmdi)++;
 
                 if (!strcmp ((char *)words[wordcount-2], "push-pem")) {
-                        if (strcmp ((char *)words[wordcount-3], "create")) {
-                                ret = -1;
-                                goto out;
-                        }
-                        ret = dict_set_int32 (dict, "push_pem", 1);
+                        ret = parse_ssh_port (words, wordcount, dict, cmdi,
+                                              wordcount-4, "push_pem");
                         if (ret)
                                 goto out;
-                        (*cmdi)++;
                 } else if (!strcmp ((char *)words[wordcount-2], "no-verify")) {
-                        if (strcmp ((char *)words[wordcount-3], "create")) {
-                                ret = -1;
-                                goto out;
-                        }
-                        ret = dict_set_uint32 (dict, "no_verify",
-                                               _gf_true);
+                        ret = parse_ssh_port (words, wordcount, dict, cmdi,
+                                              wordcount-4, "no_verify");
                         if (ret)
                                 goto out;
-                        (*cmdi)++;
                 }
         } else if (!strcmp ((char *)words[wordcount-1], "push-pem")) {
-                if (strcmp ((char *)words[wordcount-2], "create")) {
-                        ret = -1;
-                        goto out;
-                }
-                ret = dict_set_int32 (dict, "push_pem", 1);
+                ret = parse_ssh_port (words, wordcount, dict, cmdi, wordcount-3,
+                                      "push_pem");
                 if (ret)
                         goto out;
-                (*cmdi)++;
         } else if (!strcmp ((char *)words[wordcount-1], "no-verify")) {
-                if ((strcmp ((char *)words[wordcount-2], "create"))) {
-                        ret = -1;
-                        goto out;
-                }
-                ret = dict_set_uint32 (dict, "no_verify",
-                                       _gf_true);
+                ret = parse_ssh_port (words, wordcount, dict, cmdi, wordcount-3,
+                                      "no_verify");
                 if (ret)
                         goto out;
-                (*cmdi)++;
         }
 
 out:
@@ -2494,9 +2531,9 @@ cli_cmd_gsync_set_parse (const char **words, int wordcount, dict_t **options)
         unsigned           glob    = 0;
         unsigned           cmdi    = 0;
         char               *opwords[] = { "create", "status", "start", "stop",
-                                          "config", "force", "delete", "no-verify"
-                                          "push-pem", "detail", "pause",
-                                          "resume", NULL };
+                                          "config", "force", "delete",
+                                          "ssh-port", "no-verify", "push-pem",
+                                          "detail", "pause", "resume", NULL };
         char               *w = NULL;
         char               *save_ptr   = NULL;
         char               *slave_temp = NULL;
@@ -2511,7 +2548,7 @@ cli_cmd_gsync_set_parse (const char **words, int wordcount, dict_t **options)
 
         /* new syntax:
          *
-         * volume geo-replication $m $s create [[no-verify] | [push-pem]] [force]
+         * volume geo-replication $m $s create [[ssh-port n] [[no-verify] | [push-pem]]] [force]
          * volume geo-replication [$m [$s]] status [detail]
          * volume geo-replication [$m] $s config [[!]$opt [$val]]
          * volume geo-replication $m $s start|stop [force]
@@ -2797,8 +2834,8 @@ cli_cmd_volume_top_parse (const char **words, int wordcount,
         int32_t  list_cnt       = -1;
         int      index          = 0;
         int      perf           = 0;
-        int32_t  blk_size      = 0;
-        uint32_t  count         = 0;
+        int32_t  blk_size       = 0;
+        int      count          = 0;
         gf_boolean_t nfs        = _gf_false;
         char    *delimiter      = NULL;
         char    *opwords[]      = { "open", "read", "write", "opendir",
@@ -3638,7 +3675,7 @@ cli_cmd_volume_defrag_parse (const char **words, int wordcount,
                     strcmp (words[3], "status"))
                             goto out;
         } else if ((strcmp (words[3], "tier") == 0) &&
-               (strcmp (words[4], "start") == 0)) {
+                   (strcmp (words[4], "start") == 0)) {
                 volname = (char *) words[2];
                 cmd = GF_DEFRAG_CMD_START_TIER;
                 goto done;
@@ -5098,7 +5135,7 @@ cli_cmd_bitrot_parse (const char **words, int wordcount, dict_t **options)
                                                      "biweekly", "monthly",
                                                       NULL};
         char               *scrub_values[]        = {"pause", "resume",
-                                                      NULL};
+                                                     "status", NULL};
         dict_t             *dict                  = NULL;
         gf_bitrot_type     type                   = GF_BITROT_OPTION_TYPE_NONE;
         int32_t            expiry_time            = 0;
@@ -5228,7 +5265,11 @@ cli_cmd_bitrot_parse (const char **words, int wordcount, dict_t **options)
                                 ret = -1;
                                 goto out;
                         } else {
-                                type = GF_BITROT_OPTION_TYPE_SCRUB;
+                                if (strcmp (words[4], "status") == 0) {
+                                        type = GF_BITROT_CMD_SCRUB_STATUS;
+                                } else {
+                                        type = GF_BITROT_OPTION_TYPE_SCRUB;
+                                }
                                 ret =  dict_set_str (dict, "scrub-value",
                                                     (char *) words[4]);
                                 if (ret) {

@@ -874,6 +874,12 @@ quota_build_ancestry (inode_t *inode, quota_ancestry_built_t ancestry_cbk,
                 goto err;
         }
 
+        op_ret = dict_set_int8 (xdata_req, QUOTA_LIMIT_OBJECTS_KEY, 1);
+        if (op_ret < 0) {
+                op_errno = -op_ret;
+                goto err;
+        }
+
         op_ret = dict_set_int8 (xdata_req, GET_ANCESTRY_DENTRY_KEY, 1);
         if (op_ret < 0) {
                 op_errno = -op_ret;
@@ -1371,7 +1377,7 @@ do_quota_check_limit (call_frame_t *frame, inode_t *inode, xlator_t *this,
         if (parent == NULL)
                 goto out;
 
-        new_frame = create_frame (this, this->ctx->pool);
+        new_frame = copy_frame (frame);
         if (new_frame == NULL)
                 goto out;
 
@@ -1379,7 +1385,6 @@ do_quota_check_limit (call_frame_t *frame, inode_t *inode, xlator_t *this,
         if (new_local == NULL)
                 goto out;
 
-        new_frame->root->uid = new_frame->root->gid = 0;
         new_frame->local = new_local;
         new_local->par_frame = frame;
 
@@ -3972,14 +3977,15 @@ int
 quota_setxattr (call_frame_t *frame, xlator_t *this,
                 loc_t *loc, dict_t *dict, int flags, dict_t *xdata)
 {
-        quota_priv_t    *priv                   = NULL;
+        quota_priv_t   *priv                    = NULL;
         int             op_errno                = EINVAL;
         int             op_ret                  = -1;
         int64_t         hard_lim                = -1;
         int64_t         soft_lim                = -1;
         int64_t         object_hard_limit       = -1;
         int64_t         object_soft_limit       = -1;
-        quota_local_t   *local                  = NULL;
+        quota_local_t  *local                   = NULL;
+        gf_boolean_t    internal_fop            = _gf_false;
 
         priv = this->private;
 
@@ -3989,7 +3995,10 @@ quota_setxattr (call_frame_t *frame, xlator_t *this,
         VALIDATE_OR_GOTO (this, err);
         VALIDATE_OR_GOTO (loc, err);
 
-        if (frame->root->pid >= 0) {
+        if (xdata && dict_get (xdata, GLUSTERFS_INTERNAL_FOP_KEY))
+                internal_fop = _gf_true;
+
+        if (frame->root->pid >= 0 && internal_fop == _gf_false) {
                 GF_IF_INTERNAL_XATTR_GOTO ("trusted.glusterfs.quota*", dict,
                                            op_errno, err);
                 GF_IF_INTERNAL_XATTR_GOTO ("trusted.pgfid*", dict, op_errno,
@@ -4813,6 +4822,8 @@ quota_fallocate(call_frame_t *frame, xlator_t *this, fd_t *fd, int32_t mode,
         GF_VALIDATE_OR_GOTO (this->name, priv, unwind);
 
         WIND_IF_QUOTAOFF (priv->is_quota_on, off);
+
+        INIT_LIST_HEAD (&head);
 
         GF_ASSERT (frame);
         GF_VALIDATE_OR_GOTO ("quota", this, unwind);

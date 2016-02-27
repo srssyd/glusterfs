@@ -14,10 +14,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-#include <sys/time.h>
-
 
 #include "event-history.h"
 #include "logging.h"
@@ -44,12 +40,6 @@
 #define gf_attr_size_set(mode)  ((mode) & GF_SET_ATTR_SIZE)
 #define gf_attr_atime_set(mode) ((mode) & GF_SET_ATTR_ATIME)
 #define gf_attr_mtime_set(mode) ((mode) & GF_SET_ATTR_MTIME)
-
-//Jiang Wang add
-//
-#define gettid() syscall(__NR_gettid)
-//Jiang Wang add
-
 
 struct _xlator;
 typedef struct _xlator xlator_t;
@@ -453,6 +443,11 @@ typedef int32_t (*fop_ipc_cbk_t) (call_frame_t *frame, void *cookie,
                                  xlator_t *this, int32_t op_ret,
                                  int32_t op_errno, dict_t *xdata);
 
+typedef int32_t (*fop_seek_cbk_t) (call_frame_t *frame, void *cookie,
+                                   xlator_t *this, int32_t op_ret,
+                                   int32_t op_errno, off_t offset,
+                                   dict_t *xdata);
+
 typedef int32_t (*fop_lookup_t) (call_frame_t *frame,
                                  xlator_t *this,
                                  loc_t *loc,
@@ -695,6 +690,10 @@ typedef int32_t (*fop_zerofill_t) (call_frame_t *frame,
 typedef int32_t (*fop_ipc_t) (call_frame_t *frame, xlator_t *this, int32_t op,
                               dict_t *xdata);
 
+typedef int32_t (*fop_seek_t) (call_frame_t *frame, xlator_t *this, fd_t *fd,
+                               off_t offset, gf_seek_what_t what,
+                               dict_t *xdata);
+
 struct xlator_fops {
         fop_lookup_t         lookup;
         fop_stat_t           stat;
@@ -742,6 +741,7 @@ struct xlator_fops {
 	fop_discard_t	     discard;
         fop_zerofill_t       zerofill;
         fop_ipc_t            ipc;
+        fop_seek_t           seek;
 
         /* these entries are used for a typechecking hack in STACK_WIND _only_ */
         fop_lookup_cbk_t         lookup_cbk;
@@ -790,6 +790,7 @@ struct xlator_fops {
 	fop_discard_cbk_t	 discard_cbk;
         fop_zerofill_cbk_t       zerofill_cbk;
         fop_ipc_cbk_t            ipc_cbk;
+        fop_seek_cbk_t           seek_cbk;
 };
 
 typedef int32_t (*cbk_forget_t) (xlator_t *this,
@@ -863,6 +864,7 @@ struct _xlator {
         /* Built during parsing */
         char          *name;
         char          *type;
+        char          *instance_name;  /* Used for multi NFSd */
         xlator_t      *next;
         xlator_t      *prev;
         xlator_list_t *parents;
@@ -998,6 +1000,4 @@ glusterfs_reachable_leaves(xlator_t *base, dict_t *leaves);
 int
 xlator_subvolume_count (xlator_t *this);
 
-
-double getUTtime();
 #endif /* _XLATOR_H */

@@ -231,7 +231,8 @@ ec_removexattr (call_frame_t *frame, xlator_t *this, uintptr_t target,
         }
     }
     if (xdata != NULL) {
-        fop->xdata = dict_ref(xdata);
+
+        fop->xdata = dict_copy_with_ref (xdata, NULL);
         if (fop->xdata == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -317,7 +318,8 @@ ec_fremovexattr (call_frame_t *frame, xlator_t *this, uintptr_t target,
         }
     }
     if (xdata != NULL) {
-        fop->xdata = dict_ref(xdata);
+
+        fop->xdata = dict_copy_with_ref(xdata, NULL);
         if (fop->xdata == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -512,7 +514,7 @@ void ec_setattr(call_frame_t * frame, xlator_t * this, uintptr_t target,
         fop->iatt = *stbuf;
     }
     if (xdata != NULL) {
-        fop->xdata = dict_ref(xdata);
+        fop->xdata = dict_copy_with_ref(xdata, NULL);
         if (fop->xdata == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -593,7 +595,7 @@ void ec_fsetattr(call_frame_t * frame, xlator_t * this, uintptr_t target,
         fop->iatt = *stbuf;
     }
     if (xdata != NULL) {
-        fop->xdata = dict_ref(xdata);
+        fop->xdata = dict_copy_with_ref(xdata, NULL);
         if (fop->xdata == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -666,7 +668,9 @@ ec_setxattr (call_frame_t *frame, xlator_t *this, uintptr_t target,
         }
     }
     if (dict != NULL) {
-        fop->dict = dict_ref(dict);
+
+        fop->dict = dict_copy_with_ref(dict, NULL);
+
         if (fop->dict == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -677,7 +681,8 @@ ec_setxattr (call_frame_t *frame, xlator_t *this, uintptr_t target,
         }
     }
     if (xdata != NULL) {
-        fop->xdata = dict_ref(xdata);
+
+        fop->xdata = dict_copy_with_ref(xdata, NULL);
         if (fop->xdata == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -795,7 +800,9 @@ ec_fsetxattr (call_frame_t *frame, xlator_t *this, uintptr_t target,
         }
     }
     if (dict != NULL) {
-        fop->dict = dict_ref(dict);
+
+        fop->dict = dict_copy_with_ref(dict, NULL);
+
         if (fop->dict == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -806,7 +813,8 @@ ec_fsetxattr (call_frame_t *frame, xlator_t *this, uintptr_t target,
         }
     }
     if (xdata != NULL) {
-        fop->xdata = dict_ref(xdata);
+
+        fop->xdata = dict_copy_with_ref(xdata, NULL);
         if (fop->xdata == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -1092,7 +1100,8 @@ void ec_truncate(call_frame_t * frame, xlator_t * this, uintptr_t target,
         }
     }
     if (xdata != NULL) {
-        fop->xdata = dict_ref(xdata);
+
+        fop->xdata = dict_copy_with_ref(xdata, NULL);
         if (fop->xdata == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -1170,7 +1179,8 @@ void ec_ftruncate(call_frame_t * frame, xlator_t * this, uintptr_t target,
         }
     }
     if (xdata != NULL) {
-        fop->xdata = dict_ref(xdata);
+
+        fop->xdata = dict_copy_with_ref(xdata, NULL);
         if (fop->xdata == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -1265,6 +1275,27 @@ int32_t ec_writev_merge_head(call_frame_t * frame, void * cookie,
     return 0;
 }
 
+
+static int
+ec_make_internal_fop_xdata (dict_t **xdata)
+{
+    dict_t *dict = NULL;
+
+    dict = dict_new();
+    if (!dict)
+       goto out;
+
+    if (dict_set_str (dict, GLUSTERFS_INTERNAL_FOP_KEY, "yes"))
+       goto out;
+
+    *xdata = dict;
+    return 0;
+out:
+    if (dict)
+            dict_unref (dict);
+    return -1;
+}
+
 void ec_writev_start(ec_fop_data_t *fop)
 {
     ec_t *ec = fop->xl->private;
@@ -1275,11 +1306,9 @@ void ec_writev_start(ec_fop_data_t *fop)
     fd_t *fd;
     size_t tail;
     uint64_t current;
-    uid_t uid;
-    gid_t gid;
-    int32_t err = -ENOMEM;
 
-    printf("Start writev with offset:%d\n",fop->offset);
+    int32_t err = -ENOMEM;
+    dict_t      *xdata = NULL;
 
     /* This shouldn't fail because we have the inode locked. */
     GF_ASSERT(ec_get_inode_size(fop, fop->fd->inode, &current));
@@ -1291,9 +1320,9 @@ void ec_writev_start(ec_fop_data_t *fop)
         return;
     }
 
-    uid = fop->frame->root->uid;
+
     fop->frame->root->uid = 0;
-    gid = fop->frame->root->gid;
+
     fop->frame->root->gid = 0;
 
     ctx = ec_fd_get(fop->fd, fop->xl);
@@ -1304,9 +1333,7 @@ void ec_writev_start(ec_fop_data_t *fop)
     }
 
     fop->user_size = iov_length(fop->vector, fop->int32);
-    //printf("Stripe %d, offset:%d\n",ec->stripe_size,fop->offset);
     fop->head = ec_adjust_offset(ec, &fop->offset, 0);
-    //printf("Finish adjust offset:%d\n",fop->offset);
     fop->size = ec_adjust_size(ec, fop->user_size + fop->head, 0);
 
     iobref = iobref_new();
@@ -1323,12 +1350,9 @@ void ec_writev_start(ec_fop_data_t *fop)
     }
 
     ptr = iobuf->ptr + fop->head;
-    if(0 && fop->int32==1 && fop->head==0){
-	    printf("Oh noooooooooooooooooooooooooooooooooo!\n");
-	    iobuf->ptr = fop->vector[0].iov_base;
-    }else{
-    	ec_iov_copy_to(ptr, fop->vector, fop->int32, 0, fop->user_size);
-    }
+
+    ec_iov_copy_to(ptr, fop->vector, fop->int32, 0, fop->user_size);
+
     fop->vector[0].iov_base = iobuf->ptr;
     fop->vector[0].iov_len = fop->size;
 
@@ -1338,26 +1362,32 @@ void ec_writev_start(ec_fop_data_t *fop)
     fop->buffers = iobref;
 
     if (fop->head > 0) {
+        if (ec_make_internal_fop_xdata (&xdata)) {
+                err = -ENOMEM;
+                goto out;
+        }
         ec_readv(fop->frame, fop->xl, -1, EC_MINIMUM_MIN, ec_writev_merge_head,
-                 NULL, fd, ec->stripe_size, fop->offset, 0, NULL);
+                 NULL, fd, ec->stripe_size, fop->offset, 0, xdata);
     }
     tail = fop->size - fop->user_size - fop->head;
     if ((tail > 0) && ((fop->head == 0) || (fop->size > ec->stripe_size))) {
         if (current > fop->offset + fop->head + fop->user_size) {
+
+            if (ec_make_internal_fop_xdata (&xdata)) {
+                    err = -ENOMEM;
+                    goto out;
+            }
             ec_readv(fop->frame, fop->xl, -1, EC_MINIMUM_MIN,
                      ec_writev_merge_tail, NULL, fd, ec->stripe_size,
-                     fop->offset + fop->size - ec->stripe_size, 0, NULL);
+                     fop->offset + fop->size - ec->stripe_size, 0, xdata);
         } else {
             memset(fop->vector[0].iov_base + fop->size - tail, 0, tail);
         }
     }
 
-    fop->frame->root->uid = uid;
-    fop->frame->root->gid = gid;
-
     fd_unref(fd);
-
-    printf("Finish writev start with offset:%d\n",fop->offset);
+    if (xdata)
+            dict_unref (xdata);
 
     return;
 
@@ -1369,10 +1399,10 @@ out:
         iobref_unref(iobref);
     }
 
-    fop->frame->root->uid = uid;
-    fop->frame->root->gid = gid;
 
     fd_unref(fd);
+    if (xdata)
+            dict_unref (xdata);
 
     ec_fop_set_error(fop, -err);
 }
@@ -1469,6 +1499,9 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
             return EC_STATE_DELAYED_START;
 
         case EC_STATE_DELAYED_START:
+            fop->frame->root->uid = fop->uid;
+            fop->frame->root->gid = fop->gid;
+
             ec_dispatch_batch(fop);
 
             return EC_STATE_PREPARE_ANSWER;
@@ -1518,7 +1551,6 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
                         cbk->op_ret = fop->user_size;
                     }
                 }
-
             }
 
             return EC_STATE_REPORT;
@@ -1539,10 +1571,17 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
 
             return EC_STATE_LOCK_REUSE;
 
+        case -EC_STATE_DELAYED_START:
+            /* We have failed while doing partial reads. We need to restore
+             * original uid, gid. */
+            fop->frame->root->uid = fop->uid;
+            fop->frame->root->gid = fop->gid;
+
+            /* Fall through */
+
         case -EC_STATE_INIT:
         case -EC_STATE_LOCK:
         case -EC_STATE_DISPATCH:
-        case -EC_STATE_DELAYED_START:
         case -EC_STATE_PREPARE_ANSWER:
         case -EC_STATE_REPORT:
             GF_ASSERT(fop->error != 0);
@@ -1599,6 +1638,11 @@ int32_t ec_manager_writev(ec_fop_data_t *fop, int32_t state)
             return EC_STATE_DELAYED_START;
 
         case EC_STATE_DELAYED_START:
+            /* Restore uid, gid if they were changed to do some partial
+             * reads. */
+            fop->frame->root->uid = fop->uid;
+            fop->frame->root->gid = fop->gid;
+
             ec_dispatch_all(fop);
 
             return EC_STATE_PREPARE_ANSWER;
@@ -1659,10 +1703,17 @@ int32_t ec_manager_writev(ec_fop_data_t *fop, int32_t state)
 
             return EC_STATE_LOCK_REUSE;
 
+        case -EC_STATE_DELAYED_START:
+            /* We have failed while doing partial reads. We need to restore
+             * original uid, gid. */
+            fop->frame->root->uid = fop->uid;
+            fop->frame->root->gid = fop->gid;
+
+        /* Fall through */
+
         case -EC_STATE_INIT:
         case -EC_STATE_LOCK:
         case -EC_STATE_DISPATCH:
-        case -EC_STATE_DELAYED_START:
         case -EC_STATE_PREPARE_ANSWER:
         case -EC_STATE_REPORT:
             GF_ASSERT(fop->error != 0);
@@ -1763,7 +1814,8 @@ void ec_writev(call_frame_t * frame, xlator_t * this, uintptr_t target,
         }
     }
     if (xdata != NULL) {
-        fop->xdata = dict_ref(xdata);
+
+        fop->xdata = dict_copy_with_ref(xdata, NULL);
         if (fop->xdata == NULL) {
             gf_msg (this->name, GF_LOG_ERROR, 0,
                     EC_MSG_DICT_REF_FAIL,
@@ -1775,7 +1827,6 @@ void ec_writev(call_frame_t * frame, xlator_t * this, uintptr_t target,
     }
 
     error = 0;
-    printf("A write request:%p %d.Offset:%d\n",vector[0].iov_base,vector[0].iov_len,offset);
 
 out:
     if (fop != NULL) {

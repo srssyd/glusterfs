@@ -251,6 +251,7 @@ int32_t ec_fsync_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
     cbk = ec_cbk_data_allocate(frame, this, fop, GF_FOP_FSYNC, idx, op_ret,
                                op_errno);
 
+
     if (cbk != NULL)
     {
         if (op_ret >= 0)
@@ -283,10 +284,12 @@ int32_t ec_fsync_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
 out:
     if (fop != NULL)
     {
+
         if(fop->id != GF_FOP_WRITE)
             ec_complete(fop);
         else
             ec_fop_data_release(fop);
+
     }
 
     return 0;

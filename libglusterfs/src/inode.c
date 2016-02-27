@@ -1755,13 +1755,40 @@ inode_table_destroy (inode_table_t *inode_table) {
          */
         pthread_mutex_lock (&inode_table->lock);
         {
-                list_for_each_entry_safe (trav, tmp, &inode_table->active, list) {
+                /* Process lru list first as we need to unset their dentry
+                 * entries (the ones which may not be unset during
+                 * '__inode_passivate' as they were hashed) which in turn
+                 * shall unref their parent
+                 *
+                 * These parent inodes when unref'ed may well again fall
+                 * into lru list and if we are at the end of traversing
+                 * the list, we may miss to delete/retire that entry. Hence
+                 * traverse the lru list till it gets empty.
+                 */
+                while (!list_empty (&inode_table->lru)) {
+                        list_for_each_entry_safe (trav, tmp, &inode_table->lru,
+                                                  list) {
+                                __inode_forget (trav, 0);
+                                __inode_retire (trav);
+                        }
+                }
+
+                list_for_each_entry_safe (trav, tmp, &inode_table->active,
+                                          list) {
+                        /* forget and unref the inode to retire and add it to
+                         * purge list. By this time there should not be any
+                         * inodes present in the active list except for root
+                         * inode. Its a ref_leak otherwise. */
+                        if (trav != inode_table->root)
+                                gf_msg_callingfn (THIS->name, GF_LOG_WARNING, 0,
+                                                  LG_MSG_REF_COUNT,
+                                                  "Active inode(%p) with refcount"
+                                                  "(%d) found during cleanup",
+                                                  trav, trav->ref);
+                        __inode_forget (trav, 0);
                         __inode_ref_reduce_by_n (trav, 0);
                 }
 
-                list_for_each_entry_safe (trav, tmp, &inode_table->lru, list) {
-                        __inode_forget (trav, 0);
-                }
         }
         pthread_mutex_unlock (&inode_table->lock);
 
@@ -1845,7 +1872,7 @@ out:
 void
 inode_set_need_lookup (inode_t *inode, xlator_t *this)
 {
-        uint64_t  need_lookup = 1;
+        uint64_t  need_lookup = LOOKUP_NEEDED;
 
         if (!inode | !this)
                 return;
@@ -1855,19 +1882,29 @@ inode_set_need_lookup (inode_t *inode, xlator_t *this)
         return;
 }
 
+/* Function behaviour:
+ * Function return true if inode_ctx is not present,
+ * or value stored in inode_ctx is LOOKUP_NEEDED.
+ * If inode_ctx value is LOOKUP_NOT_NEEDED, which means
+ * inode_ctx is present for xlator this, but no lookup
+ * needed.
+ */
 gf_boolean_t
 inode_needs_lookup (inode_t *inode, xlator_t *this)
 {
         uint64_t     need_lookup = 0;
         gf_boolean_t ret         = _gf_false;
+        int          op_ret      = -1;
 
         if (!inode || !this)
                 return ret;
 
-        inode_ctx_get (inode, this, &need_lookup);
-        if (need_lookup) {
+        op_ret = inode_ctx_get (inode, this, &need_lookup);
+        if (op_ret == -1) {
                 ret = _gf_true;
-                need_lookup = 0;
+        } else if (need_lookup == LOOKUP_NEEDED) {
+                ret = _gf_true;
+                need_lookup = LOOKUP_NOT_NEEDED;
                 inode_ctx_set (inode, this, &need_lookup);
         }
 

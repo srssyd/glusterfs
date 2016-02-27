@@ -20,7 +20,12 @@
 #include "ec.h"
 #include "ec-messages.h"
 #include "ec-heald.h"
-#include "../../../../libglusterfs/src/fd.h"
+
+static char *ec_read_policies[EC_READ_POLICY_MAX + 1] = {
+        [EC_ROUND_ROBIN] = "round-robin",
+        [EC_GFID_HASH] = "gfid-hash",
+        [EC_READ_POLICY_MAX] = NULL
+};
 
 #define EC_MAX_FRAGMENTS EC_METHOD_MAX_FRAGMENTS
 /* The maximum number of nodes is derived from the maximum allowed fragments
@@ -232,10 +237,26 @@ ec_configure_background_heal_opts (ec_t *ec, int background_heals,
         ec->background_heals = background_heals;
 }
 
+int
+ec_assign_read_policy (ec_t *ec, char *read_policy)
+{
+        int read_policy_idx = -1;
+
+        read_policy_idx = gf_get_index_by_elem (ec_read_policies, read_policy);
+        if (read_policy_idx < 0 || read_policy_idx >= EC_READ_POLICY_MAX)
+                return -1;
+
+        ec->read_policy = read_policy_idx;
+        return 0;
+}
+
 int32_t
 reconfigure (xlator_t *this, dict_t *options)
 {
         ec_t     *ec              = this->private;
+
+        char     *read_policy     = NULL;
+
         uint32_t heal_wait_qlen   = 0;
         uint32_t background_heals = 0;
 
@@ -251,6 +272,11 @@ reconfigure (xlator_t *this, dict_t *options)
                           int32, failed);
         ec_configure_background_heal_opts (ec, background_heals,
                                            heal_wait_qlen);
+
+        GF_OPTION_RECONF ("read-policy", read_policy, options, str, failed);
+        if (ec_assign_read_policy (ec, read_policy))
+                goto failed;
+
         return 0;
 failed:
         return -1;
@@ -493,6 +519,12 @@ unlock:
         if (propagate) {
                 error = default_notify (this, event, data);
         }
+
+
+        if (ec->shd.iamshd &&
+            ec->xl_notify_count == ec->nodes) {
+                ec_launch_replace_heal (ec);
+        }
 out:
         return error;
 }
@@ -515,8 +547,12 @@ notify (xlator_t *this, int32_t event, void *data, ...)
 int32_t
 init (xlator_t *this)
 {
+
     ec_t *ec = NULL;
     int32_t threads=1;
+
+    char *read_policy = NULL;
+
     if (this->parents == NULL)
     {
         gf_msg (this->name, GF_LOG_WARNING, 0,
@@ -569,15 +605,26 @@ init (xlator_t *this)
 
         goto failed;
     }
+
     GF_OPTION_INIT("coding-threads",threads,int32,failed);
     ec_method_initialize(threads);
     ec_thpool_init(32);
+
+
     GF_OPTION_INIT ("self-heal-daemon", ec->shd.enabled, bool, failed);
     GF_OPTION_INIT ("iam-self-heal-daemon", ec->shd.iamshd, bool, failed);
     GF_OPTION_INIT ("background-heals", ec->background_heals, uint32, failed);
     GF_OPTION_INIT ("heal-wait-qlength", ec->heal_wait_qlen, uint32, failed);
     ec_configure_background_heal_opts (ec, ec->background_heals,
                                        ec->heal_wait_qlen);
+
+    GF_OPTION_INIT ("read-policy", read_policy, str, failed);
+    if (ec_assign_read_policy (ec, read_policy))
+            goto failed;
+
+    this->itable = inode_table_new (EC_SHD_INODE_LRU_LIMIT, this);
+    if (!this->itable)
+            goto failed;
 
     if (ec->shd.iamshd)
             ec_selfheal_daemon_init (this);
@@ -1128,6 +1175,15 @@ int32_t ec_gf_zerofill(call_frame_t * frame, xlator_t * this, fd_t * fd,
     return 0;
 }
 
+int32_t ec_gf_seek(call_frame_t *frame, xlator_t *this, fd_t *fd, off_t offset,
+                   gf_seek_what_t what, dict_t *xdata)
+{
+    ec_seek(frame, this, -1, EC_MINIMUM_ONE, default_seek_cbk, NULL, fd,
+            offset, what, xdata);
+
+    return 0;
+}
+
 int32_t ec_gf_forget(xlator_t * this, inode_t * inode)
 {
     uint64_t value = 0;
@@ -1193,6 +1249,7 @@ int32_t ec_dump_private(xlator_t *this)
     gf_proc_dump_write("heal-wait-qlength", "%d", ec->heal_wait_qlen);
     gf_proc_dump_write("healers", "%d", ec->healers);
     gf_proc_dump_write("heal-waiters", "%d", ec->heal_waiters);
+    gf_proc_dump_write("read-policy", "%s", ec_read_policies[ec->read_policy]);
 
     return 0;
 }
@@ -1241,7 +1298,8 @@ struct xlator_fops fops =
     .fsetattr     = ec_gf_fsetattr,
     .fallocate    = ec_gf_fallocate,
     .discard      = ec_gf_discard,
-    .zerofill     = ec_gf_zerofill
+    .zerofill     = ec_gf_zerofill,
+    .seek         = ec_gf_seek
 };
 
 struct xlator_cbks cbks =
@@ -1301,17 +1359,27 @@ struct volume_options options[] =
                      "in self-heal-daemon"
     },
     {
-            .key = {"coding-threads"},
-            .type = GF_OPTION_TYPE_INT,
-            .min = 1,
-            .max = 1024,
-            .default_value = "1",
-            .description = "This option can be used to determine the number of threads to encode and decode"
+      .key = {"coding-threads"},
+     .type = GF_OPTION_TYPE_INT,
+      .min = 1,
+      .max = 1024,
+      .default_value = "1",
+      .description = "This option can be used to determine the number of threads to encode and decode"
     },
     {
-            .key = {"coding-cuda"},
-            .type = GF_OPTION_TYPE_BOOL,
-            .default_value = "off",
-            .description = "This option can be used to determine whether to use GPU to encode and decode"
-    }
+      .key = {"coding-cuda"},
+      .type = GF_OPTION_TYPE_BOOL,
+      .default_value = "off",
+      .description = "This option can be used to determine whether to use GPU to encode and decode"
+    },
+    { .key = {"read-policy" },
+      .type = GF_OPTION_TYPE_STR,
+      .value = {"round-robin", "gfid-hash"},
+      .default_value = "round-robin",
+      .description = "inode-read fops happen only on 'k' number of bricks in"
+              " n=k+m disperse subvolume. 'round-robin' selects the read"
+              " subvolume using round-robin algo. 'gfid-hash' selects read"
+              " subvolume based on hash of the gfid of that file/directory.",
+    },
+    { }
 };

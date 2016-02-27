@@ -74,6 +74,20 @@ bitd_fetch_signature (xlator_t *this, br_child_t *child,
 
 }
 
+static void
+br_inc_unsigned_file_count (xlator_t *this)
+{
+        br_private_t   *priv = NULL;
+
+        priv = this->private;
+
+        pthread_mutex_lock (&priv->scrub_stat.lock);
+        {
+                priv->scrub_stat.unsigned_files++;
+        }
+        pthread_mutex_unlock (&priv->scrub_stat.lock);
+}
+
 /**
  * POST COMPUTE CHECK
  *
@@ -107,6 +121,7 @@ bitd_scrub_post_compute_check (xlator_t *this,
          * The log entry looks pretty ugly, but helps in debugging..
          */
         if (signptr->stale || (signptr->version != version)) {
+                br_inc_unsigned_file_count (this);
                 gf_msg_debug (this->name, 0, "<STAGE: POST> Object [GFID: %s] "
                               "either has a stale signature OR underwent "
                               "signing during checksumming {Stale: %d | "
@@ -181,6 +196,7 @@ bitd_scrub_pre_compute_check (xlator_t *this, br_child_t *child,
 
         ret = bitd_signature_staleness (this, child, fd, &stale, version);
         if (!ret && stale) {
+                br_inc_unsigned_file_count (this);
                 gf_msg_debug (this->name, 0, "<STAGE: PRE> Object [GFID: %s] "
                               "has stale signature",
                               uuid_utoa (fd->inode->gfid));
@@ -256,6 +272,16 @@ bitd_compare_ckum (xlator_t *this,
         return ret;
 }
 
+static void
+br_inc_scrubbed_file (br_private_t *priv)
+{
+        pthread_mutex_lock (&priv->scrub_stat.lock);
+        {
+                priv->scrub_stat.scrubbed_files++;
+        }
+        pthread_mutex_unlock (&priv->scrub_stat.lock);
+}
+
 /**
  * "The Scrubber"
  *
@@ -266,19 +292,20 @@ bitd_compare_ckum (xlator_t *this,
 int
 br_scrubber_scrub_begin (xlator_t *this, struct br_fsscan_entry *fsentry)
 {
-        int32_t              ret           = -1;
-        fd_t                *fd            = NULL;
-        loc_t                loc           = {0, };
-        struct iatt          iatt          = {0, };
-        struct iatt          parent_buf    = {0, };
-        pid_t                pid           = 0;
-        br_child_t          *child         = NULL;
-        unsigned char       *md            = NULL;
-        inode_t             *linked_inode  = NULL;
-        br_isignature_out_t *sign          = NULL;
-        unsigned long        signedversion = 0;
-        gf_dirent_t         *entry         = NULL;
-        loc_t               *parent        = NULL;
+        int32_t                ret           = -1;
+        fd_t                  *fd            = NULL;
+        loc_t                  loc           = {0, };
+        struct iatt            iatt          = {0, };
+        struct iatt            parent_buf    = {0, };
+        pid_t                  pid           = 0;
+        br_child_t            *child         = NULL;
+        unsigned char         *md            = NULL;
+        inode_t               *linked_inode  = NULL;
+        br_isignature_out_t   *sign          = NULL;
+        unsigned long          signedversion = 0;
+        gf_dirent_t           *entry         = NULL;
+        br_private_t          *priv          = NULL;
+        loc_t                 *parent        = NULL;
 
         GF_VALIDATE_OR_GOTO ("bit-rot", fsentry, out);
 
@@ -286,9 +313,12 @@ br_scrubber_scrub_begin (xlator_t *this, struct br_fsscan_entry *fsentry)
         parent = &fsentry->parent;
         child = fsentry->data;
 
+        priv = this->private;
+
         GF_VALIDATE_OR_GOTO ("bit-rot", entry, out);
         GF_VALIDATE_OR_GOTO ("bit-rot", parent, out);
         GF_VALIDATE_OR_GOTO ("bit-rot", child, out);
+        GF_VALIDATE_OR_GOTO ("bit-rot", priv, out);
 
         pid = GF_CLIENT_PID_SCRUB;
 
@@ -374,6 +404,9 @@ br_scrubber_scrub_begin (xlator_t *this, struct br_fsscan_entry *fsentry)
 
         ret = bitd_compare_ckum (this, sign, md,
                                  linked_inode, entry, fd, child, &loc);
+
+        /* Increment of total number of scrubbed file counter */
+        br_inc_scrubbed_file (priv);
 
         GF_FREE (sign); /* alloced on post-compute */
 
@@ -553,21 +586,72 @@ br_fsscan_deactivate (xlator_t *this, br_child_t *child)
 
         return 0;
 }
+static void
+br_update_scrub_start_time (xlator_t *this, struct timeval *tv)
+{
+        br_private_t     *priv = NULL;
+        static int       child;
+
+        priv = this->private;
+
+
+        /* Setting scrubber starting time for first child only */
+        if (child == 0) {
+                pthread_mutex_lock (&priv->scrub_stat.lock);
+                {
+                        priv->scrub_stat.scrub_start_tv.tv_sec = tv->tv_sec;
+                }
+                pthread_mutex_unlock (&priv->scrub_stat.lock);
+        }
+
+        if (++child == priv->up_children) {
+                child = 0;
+        }
+}
+
+static void
+br_update_scrub_finish_time (xlator_t *this, char *timestr, struct timeval *tv)
+{
+        br_private_t     *priv = NULL;
+        static int       child;
+
+        priv = this->private;
+
+        /*Setting scrubber finishing time at time time of last child operation*/
+        if (++child == priv->up_children) {
+                pthread_mutex_lock (&priv->scrub_stat.lock);
+                {
+                        priv->scrub_stat.scrub_end_tv.tv_sec = tv->tv_sec;
+
+                        priv->scrub_stat.scrub_duration =
+                                         priv->scrub_stat.scrub_end_tv.tv_sec -
+                                         priv->scrub_stat.scrub_start_tv.tv_sec;
+
+                        strncpy (priv->scrub_stat.last_scrub_time, timestr,
+                                 sizeof (priv->scrub_stat.last_scrub_time));
+
+                        child = 0;
+                }
+                pthread_mutex_unlock (&priv->scrub_stat.lock);
+        }
+}
 
 static void
 br_fsscanner_log_time (xlator_t *this, br_child_t *child, const char *sfx)
 {
-        struct timeval tv = {0,};
-        char timestr[1024] = {0,};
+        char           timestr[1024] = {0,};
+        struct         timeval tv    = {0,};
 
         gettimeofday (&tv, NULL);
         gf_time_fmt (timestr, sizeof (timestr), tv.tv_sec, gf_timefmt_FT);
 
         if (strcasecmp (sfx, "started") == 0) {
+                br_update_scrub_start_time (this, &tv);
                 gf_msg (this->name, GF_LOG_INFO, 0, BRB_MSG_SCRUB_START,
                         "Scrubbing \"%s\" %s at %s", child->brick_path, sfx,
                         timestr);
         } else {
+                br_update_scrub_finish_time (this, timestr, &tv);
                 gf_msg (this->name, GF_LOG_INFO, 0, BRB_MSG_SCRUB_FINISH,
                         "Scrubbing \"%s\" %s at %s", child->brick_path, sfx,
                         timestr);
@@ -575,14 +659,33 @@ br_fsscanner_log_time (xlator_t *this, br_child_t *child, const char *sfx)
 }
 
 static void
-br_fsscanner_wait_until_kicked (struct br_scanfs *fsscan)
+br_fsscanner_wait_until_kicked (xlator_t *this, struct br_scanfs *fsscan)
 {
+        static int            i;
+        br_private_t         *priv    = NULL;
+
+        priv = this->private;
+
         pthread_cleanup_push (_br_lock_cleaner, &fsscan->wakelock);
         pthread_mutex_lock (&fsscan->wakelock);
         {
                 while (!fsscan->kick)
                         pthread_cond_wait (&fsscan->wakecond,
                                            &fsscan->wakelock);
+
+                /* resetting total number of scrubbed file when scrubbing
+                 * done for all of its children */
+                if (i == priv->up_children) {
+                        pthread_mutex_lock (&priv->scrub_stat.lock);
+                        {
+                                priv->scrub_stat.scrubbed_files = 0;
+                                priv->scrub_stat.unsigned_files = 0;
+                                i = 0;
+                        }
+                        pthread_mutex_unlock (&priv->scrub_stat.lock);
+                }
+                ++i;
+
                 fsscan->kick = _gf_false;
         }
         pthread_mutex_unlock (&fsscan->wakelock);
@@ -640,7 +743,7 @@ br_fsscanner (void *arg)
         loc.inode = child->table->root;
 
         while (1) {
-                br_fsscanner_wait_until_kicked (fsscan);
+                br_fsscanner_wait_until_kicked (this, fsscan);
                 {
                         /* precursor for scrub */
                         br_fsscanner_entry_control (this, child);
@@ -936,7 +1039,7 @@ _br_scrubber_find_scrubbable_entry (struct br_scrubber *fsscrub,
         br_child_t *firstchild = NULL;
 
         while (1) {
-                if (list_empty (&fsscrub->scrublist))
+                while (list_empty (&fsscrub->scrublist))
                         pthread_cond_wait (&fsscrub->cond, &fsscrub->mutex);
 
                 firstchild = NULL;
@@ -1341,6 +1444,283 @@ br_scrubber_handle_options (xlator_t *this, br_private_t *priv, dict_t *options)
 
  error_return:
         return -1;
+}
+
+inode_t *
+br_lookup_bad_obj_dir (xlator_t *this, br_child_t *child, uuid_t gfid)
+{
+        struct  iatt statbuf   = {0, };
+        inode_table_t *table = NULL;
+        int32_t      ret     = -1;
+        loc_t        loc     = {0, };
+        inode_t     *linked_inode = NULL;
+        int32_t      op_errno = 0;
+
+        GF_VALIDATE_OR_GOTO ("bit-rot-scrubber", this, out);
+        GF_VALIDATE_OR_GOTO (this->name, this->private, out);
+        GF_VALIDATE_OR_GOTO (this->name, child, out);
+
+        table = child->table;
+
+        loc.inode = inode_new (table);
+        if (!loc.inode) {
+                gf_msg (this->name, GF_LOG_ERROR, ENOMEM,
+                        BRB_MSG_NO_MEMORY, "failed to allocate a new inode for"
+                        "bad object directory");
+                goto out;
+        }
+
+        gf_uuid_copy (loc.gfid, gfid);
+
+        ret = syncop_lookup (child->xl, &loc, &statbuf, NULL, NULL, NULL);
+        if (ret < 0) {
+                op_errno = -ret;
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        BRB_MSG_LOOKUP_FAILED, "failed to lookup the bad "
+                        "objects directory (gfid: %s (%s))", uuid_utoa (gfid),
+                        strerror (op_errno));
+                goto out;
+        }
+
+        linked_inode = inode_link (loc.inode, NULL, NULL, &statbuf);
+        if (linked_inode)
+                inode_lookup (linked_inode);
+
+out:
+        loc_wipe (&loc);
+        return linked_inode;
+}
+
+int32_t
+br_read_bad_object_dir (xlator_t *this, br_child_t *child, fd_t *fd,
+                        dict_t *dict)
+{
+        gf_dirent_t  entries;
+        gf_dirent_t *entry   = NULL;
+        int32_t      ret     = -1;
+        off_t        offset  = 0;
+        int32_t      count   = 0;
+        char         key[PATH_MAX] = {0, };
+
+        INIT_LIST_HEAD (&entries.list);
+
+        while ((ret = syncop_readdir (child->xl, fd, 131072, offset, &entries,
+                                      NULL, NULL))) {
+                if (ret < 0)
+                        goto out;
+		if (ret == 0)
+			break;
+		list_for_each_entry (entry, &entries.list, list) {
+			offset = entry->d_off;
+
+                         snprintf (key, sizeof (key), "quarantine-%d", count);
+
+                        /*
+                         * ignore the dict_set errors for now. The intention is
+                         * to get as many bad objects as possible instead of
+                         * erroring out at the first failure.
+                         */
+                         ret = dict_set_dynstr_with_alloc (dict, key,
+                                                           entry->d_name);
+                        if (!ret)
+                                count++;
+		}
+
+		gf_dirent_free (&entries);
+	}
+
+        ret = count;
+        ret = dict_set_int32 (dict, "count", count);
+
+out:
+        return ret;
+}
+
+int32_t
+br_get_bad_objects_from_child (xlator_t *this, dict_t *dict, br_child_t *child)
+{
+        inode_t     *inode   = NULL;
+        inode_table_t *table = NULL;
+        fd_t        *fd      = NULL;
+        int32_t      ret     = -1;
+        loc_t        loc     = {0, };
+        int32_t      op_errno = 0;
+
+        GF_VALIDATE_OR_GOTO ("bit-rot-scrubber", this, out);
+        GF_VALIDATE_OR_GOTO (this->name, this->private, out);
+        GF_VALIDATE_OR_GOTO (this->name, child, out);
+        GF_VALIDATE_OR_GOTO (this->name, dict, out);
+
+        table = child->table;
+
+        inode = inode_find (table, BR_BAD_OBJ_CONTAINER);
+        if (!inode) {
+                inode = br_lookup_bad_obj_dir (this, child,
+                                               BR_BAD_OBJ_CONTAINER);
+                if (!inode)
+                        goto out;
+        }
+
+        fd = fd_create (inode, 0);
+        if (!fd) {
+                gf_msg (this->name, GF_LOG_ERROR, ENOMEM,
+                        BRB_MSG_FD_CREATE_FAILED, "fd creation for the bad "
+                        "objects directory failed (gfid: %s)",
+                        uuid_utoa (BR_BAD_OBJ_CONTAINER));
+                goto out;
+        }
+
+        loc.inode = inode;
+        gf_uuid_copy (loc.gfid, inode->gfid);
+
+        ret = syncop_opendir (child->xl, &loc, fd, NULL, NULL);
+        if (ret < 0) {
+                op_errno = -ret;
+                fd_unref (fd);
+                fd = NULL;
+                gf_msg (this->name, GF_LOG_ERROR, op_errno,
+                        BRB_MSG_FD_CREATE_FAILED, "failed to open the bad "
+                        "objects directory %s",
+                        uuid_utoa (BR_BAD_OBJ_CONTAINER));
+                goto out;
+        }
+
+        fd_bind (fd);
+
+        ret = br_read_bad_object_dir (this, child, fd, dict);
+        if (ret < 0) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        BRB_MSG_BAD_OBJ_READDIR_FAIL, "readdir of the bad "
+                        "objects directory (%s) failed ",
+                        uuid_utoa (BR_BAD_OBJ_CONTAINER));
+                goto out;
+        }
+
+        ret = 0;
+
+out:
+        loc_wipe (&loc);
+        if (fd)
+                fd_unref (fd);
+        return ret;
+}
+
+int32_t
+br_collect_bad_objects_of_child (xlator_t *this, br_child_t *child,
+                                 dict_t *dict, dict_t *child_dict,
+                                 int32_t total_count)
+{
+
+        int32_t    ret = -1;
+        int32_t    count = 0;
+        char       key[PATH_MAX] = {0, };
+        char       main_key[PATH_MAX] = {0, };
+        int32_t     j = 0;
+        int32_t    tmp_count = 0;
+        char       *entry = NULL;
+
+        ret = dict_get_int32 (child_dict, "count", &count);
+        if (ret)
+                goto out;
+
+        tmp_count = total_count;
+
+        for (j = 0; j < count; j++) {
+                snprintf (key, PATH_MAX, "quarantine-%d", j);
+                ret = dict_get_str (child_dict, key, &entry);
+                if (ret)
+                        continue;
+                snprintf (main_key, PATH_MAX, "quarantine-%d",
+                          tmp_count);
+                ret = dict_set_dynstr_with_alloc (dict, main_key, entry);
+                if (!ret)
+                        tmp_count++;
+        }
+
+        ret = tmp_count;
+
+out:
+        return ret;
+}
+
+int32_t
+br_collect_bad_objects_from_children (xlator_t *this, dict_t *dict)
+{
+        int32_t    ret = -1;
+        dict_t    *child_dict = NULL;
+        int32_t    i = 0;
+        int32_t    total_count = 0;
+        br_child_t *child = NULL;
+        br_private_t *priv = NULL;
+        dict_t     *tmp_dict = NULL;
+
+        priv = this->private;
+        tmp_dict = dict;
+
+        for (i = 0; i < priv->child_count; i++) {
+                child = &priv->children[i];
+                GF_ASSERT (child);
+                if (!_br_is_child_connected (child))
+                        continue;
+
+                child_dict = dict_new ();
+                if (!child_dict) {
+                        gf_msg (this->name, GF_LOG_ERROR, ENOMEM,
+                                BRB_MSG_NO_MEMORY, "failed to allocate dict");
+                        continue;
+                }
+                ret = br_get_bad_objects_from_child (this, child_dict, child);
+                /*
+                 * Continue asking the remaining children for the list of
+                 * bad objects even though getting the list from one of them
+                 * fails.
+                 */
+                if (ret) {
+                        dict_unref (child_dict);
+                        continue;
+                }
+
+                ret = br_collect_bad_objects_of_child (this, child, tmp_dict,
+                                                       child_dict, total_count);
+                if (ret < 0) {
+                        dict_unref (child_dict);
+                        continue;
+                }
+
+                total_count = ret;
+                dict_unref (child_dict);
+                child_dict = NULL;
+        }
+
+        ret = dict_set_int32 (tmp_dict, "total-count", total_count);
+
+        return ret;
+}
+
+int32_t
+br_get_bad_objects_list (xlator_t *this, dict_t **dict)
+{
+        int32_t      ret     = -1;
+        dict_t      *tmp_dict = NULL;
+
+        GF_VALIDATE_OR_GOTO ("bir-rot-scrubber", this, out);
+        GF_VALIDATE_OR_GOTO (this->name, dict, out);
+
+        tmp_dict = *dict;
+        if (!tmp_dict) {
+                tmp_dict = dict_new ();
+                if (!tmp_dict) {
+                        gf_msg (this->name, GF_LOG_ERROR, ENOMEM,
+                                BRB_MSG_NO_MEMORY, "failed to allocate dict");
+                        goto out;
+                }
+                *dict = tmp_dict;
+        }
+
+        ret = br_collect_bad_objects_from_children (this, tmp_dict);
+
+out:
+        return ret;
 }
 
 int32_t

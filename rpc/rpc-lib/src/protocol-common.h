@@ -60,6 +60,7 @@ enum gf_fop_procnum {
 	GFS3_OP_DISCARD,
         GFS3_OP_ZEROFILL,
         GFS3_OP_IPC,
+        GFS3_OP_SEEK,
         GFS3_OP_MAXVALUE,
 } ;
 
@@ -217,6 +218,7 @@ enum glusterd_brick_procnum {
         GLUSTERD_NODE_STATUS,
         GLUSTERD_VOLUME_BARRIER_OP,
         GLUSTERD_BRICK_BARRIER,
+        GLUSTERD_NODE_BITROT,
         GLUSTERD_BRICK_MAXVALUE,
 };
 

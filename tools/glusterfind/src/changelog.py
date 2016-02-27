@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 # Copyright (c) 2015 Red Hat, Inc. <http://www.redhat.com/>
 # This file is part of GlusterFS.
@@ -53,7 +54,7 @@ def pgfid_to_path(brick, changelog_data):
 
         try:
             path = symlink_gfid_to_path(brick, row[0])
-            path = output_path_prepare(path, args.output_prefix)
+            path = output_path_prepare(path, args)
             changelog_data.gfidpath_set_path1(path, row[0])
         except (IOError, OSError) as e:
             logger.warn("Error converting to path: %s" % e)
@@ -69,7 +70,7 @@ def pgfid_to_path(brick, changelog_data):
 
         try:
             path = symlink_gfid_to_path(brick, row[0])
-            path = output_path_prepare(path, args.output_prefix)
+            path = output_path_prepare(path, args)
             changelog_data.gfidpath_set_path2(path, row[0])
         except (IOError, OSError) as e:
             logger.warn("Error converting to path: %s" % e)
@@ -90,7 +91,7 @@ def populate_pgfid_and_inodegfid(brick, changelog_data):
             # It is a Directory if GFID backend path is symlink
             try:
                 path = symlink_gfid_to_path(brick, gfid)
-                path = output_path_prepare(path, args.output_prefix)
+                path = output_path_prepare(path, args)
                 changelog_data.gfidpath_update({"path1": path},
                                                 {"gfid": gfid})
             except (IOError, OSError) as e:
@@ -145,7 +146,7 @@ def gfid_to_path_using_pgfid(brick, changelog_data, args):
         path = path.strip()
         path = path[brick_path_len+1:]
 
-        path = output_path_prepare(path, args.output_prefix)
+        path = output_path_prepare(path, args)
 
         changelog_data.append_path1(path, inode)
         changelog_data.inodegfid_update({"converted": 1}, {"inode": inode})
@@ -193,7 +194,7 @@ def gfid_to_path_using_batchfind(brick, changelog_data):
         # Also updates converted flag in inodegfid table as 1
         path = path.strip()
         path = path[brick_path_len+1:]
-        path = output_path_prepare(path, args.output_prefix)
+        path = output_path_prepare(path, args)
 
         changelog_data.append_path1(path, inode)
 
@@ -230,7 +231,7 @@ def parse_changelog_to_db(changelog_data, filename, args):
                 changelog_data.when_rename(changelogfile, data)
             elif data[0] == "E" and data[2] in ["UNLINK", "RMDIR"]:
                 # UNLINK/RMDIR
-                changelog_data.when_unlink_rmdir(changelogfile, data, args)
+                changelog_data.when_unlink_rmdir(changelogfile, data)
 
 
 def get_changes(brick, hash_dir, log_file, start, end, args):
@@ -260,7 +261,7 @@ def get_changes(brick, hash_dir, log_file, start, end, args):
         fail("%s Changelog register failed: %s" % (brick, e), logger=logger)
 
     # Output files to record GFIDs and GFID to Path failure GFIDs
-    changelog_data = ChangelogData(args.outfile)
+    changelog_data = ChangelogData(args.outfile, args)
 
     # Changelogs path(Hard coded to BRICK/.glusterfs/changelogs
     cl_path = os.path.join(brick, ".glusterfs/changelogs")
@@ -351,7 +352,12 @@ def _get_args():
     parser.add_argument("brick", help="Brick Name")
     parser.add_argument("outfile", help="Output File")
     parser.add_argument("start", help="Start Time", type=int)
+    parser.add_argument("--only-query", help="Query mode only (no session)",
+                        action="store_true")
     parser.add_argument("--debug", help="Debug", action="store_true")
+    parser.add_argument("--no-encode",
+                        help="Do not encode path in outfile",
+                        action="store_true")
     parser.add_argument("--output-prefix", help="File prefix in output",
                         default=".")
     parser.add_argument("-N", "--only-namespace-changes",
@@ -378,19 +384,23 @@ if __name__ == "__main__":
     mkdirp(os.path.join(session_dir, args.volume), exit_on_err=True,
            logger=logger)
 
-    try:
-        with open(status_file) as f:
-            start = int(f.read().strip())
-    except (ValueError, OSError, IOError):
+    if args.only_query:
         start = args.start
+    else:
+        try:
+            with open(status_file) as f:
+                start = int(f.read().strip())
+        except (ValueError, OSError, IOError):
+            start = args.start
 
     end = int(time.time()) - get_changelog_rollover_time(args.volume)
     logger.info("%s Started Changelog Crawl - Start: %s End: %s" % (args.brick,
                                                                     start,
                                                                     end))
     actual_end = changelog_crawl(args.brick, start, end, args)
-    with open(status_file_pre, "w", buffering=0) as f:
-        f.write(str(actual_end))
+    if not args.only_query:
+        with open(status_file_pre, "w", buffering=0) as f:
+            f.write(str(actual_end))
 
     logger.info("%s Finished Changelog Crawl - End: %s" % (args.brick,
                                                            actual_end))

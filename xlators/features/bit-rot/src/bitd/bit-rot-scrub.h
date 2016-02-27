@@ -8,7 +8,7 @@
    cases as published by the Free Software Foundation.
 */
 
-#ifndef __BIT_ROT__SCRUB_H__
+#ifndef __BIT_ROT_SCRUB_H__
 #define __BIT_ROT_SCRUB_H__
 
 #include "xlator.h"
@@ -24,5 +24,7 @@ int32_t br_fsscan_deactivate (xlator_t *, br_child_t *);
 int32_t br_scrubber_handle_options (xlator_t *, br_private_t *, dict_t *);
 
 int32_t br_scrubber_init (xlator_t *, br_private_t *);
+
+int32_t br_collect_bad_objects_from_children (xlator_t *this, dict_t *dict);
 
 #endif /* __BIT_ROT_SCRUB_H__ */

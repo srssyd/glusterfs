@@ -54,6 +54,27 @@ afr_selfheal_post_op (call_frame_t *frame, xlator_t *this, inode_t *inode,
 	return 0;
 }
 
+int
+afr_check_stale_error (struct afr_reply *replies, afr_private_t *priv)
+{
+        int i = 0;
+        int op_errno = 0;
+        int tmp_errno = 0;
+        int stale_count = 0;
+
+        for (i = 0; i < priv->child_count; i++) {
+                tmp_errno = replies[i].op_errno;
+                if (tmp_errno == ENOENT || tmp_errno == ESTALE) {
+                        op_errno = afr_higher_errno (op_errno, tmp_errno);
+                        stale_count++;
+                }
+        }
+        if (stale_count != priv->child_count)
+                return -ENOTCONN;
+        else
+                return -op_errno;
+}
+
 
 dict_t *
 afr_selfheal_output_xattr (xlator_t *this, afr_transaction_type type,
@@ -507,7 +528,8 @@ afr_selfheal_find_direction (call_frame_t *frame, xlator_t *this,
                              struct afr_reply *replies,
                              afr_transaction_type type,
                              unsigned char *locked_on, unsigned char *sources,
-                             unsigned char *sinks, uint64_t *witness)
+                             unsigned char *sinks, uint64_t *witness,
+                             gf_boolean_t *pflag)
 {
         afr_private_t *priv = NULL;
         int i = 0;
@@ -527,14 +549,24 @@ afr_selfheal_find_direction (call_frame_t *frame, xlator_t *this,
 	matrix = ALLOC_MATRIX(priv->child_count, int);
         memset (witness, 0, sizeof (*witness) * priv->child_count);
 
+	/* First construct the pending matrix for further analysis */
+	afr_selfheal_extract_xattr (this, replies, type, dirty, matrix);
+
+        if (pflag) {
+                for (i = 0; i < priv->child_count; i++) {
+                        for (j = 0; j < priv->child_count; j++)
+                                if (matrix[i][j])
+                                        *pflag = _gf_true;
+                        if (*pflag)
+                                break;
+                }
+        }
+
         if (afr_success_count (replies,
                                priv->child_count) < AFR_SH_MIN_PARTICIPANTS) {
                 /* Treat this just like locks not being acquired */
                 return -ENOTCONN;
         }
-
-	/* First construct the pending matrix for further analysis */
-	afr_selfheal_extract_xattr (this, replies, type, dirty, matrix);
 
         /* short list all self-accused */
         for (i = 0; i < priv->child_count; i++) {
@@ -657,6 +689,8 @@ afr_selfheal_discover_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 {
 	afr_local_t *local = NULL;
 	int i = -1;
+        GF_UNUSED int ret = -1;
+	int8_t need_heal = 1;
 
 	local = frame->local;
 	i = (long) cookie;
@@ -668,8 +702,13 @@ afr_selfheal_discover_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 		local->replies[i].poststat = *buf;
 	if (parbuf)
 		local->replies[i].postparent = *parbuf;
-	if (xdata)
+	if (xdata) {
 		local->replies[i].xdata = dict_ref (xdata);
+                ret = dict_get_int8 (xdata, "link-count", &need_heal);
+                local->replies[i].need_heal = need_heal;
+        } else {
+                local->replies[i].need_heal = need_heal;
+        }
 
 	syncbarrier_wake (&local->barrier);
 
@@ -1196,7 +1235,7 @@ afr_selfheal_unlocked_inspect (call_frame_t *frame, xlator_t *this,
                         goto out;
                 }
         } else if (valid_cnt < 2) {
-                ret = -ENOTCONN;
+                ret = afr_check_stale_error (replies, priv);
                 goto out;
         }
 
@@ -1241,7 +1280,7 @@ afr_frame_create (xlator_t *this)
 	call_frame_t *frame    = NULL;
 	afr_local_t  *local    = NULL;
 	int           op_errno = 0;
-	pid_t         pid      = GF_CLIENT_PID_AFR_SELF_HEALD;
+	pid_t         pid      = GF_CLIENT_PID_SELF_HEALD;
 
 	frame = create_frame (this, this->ctx->pool);
 	if (!frame)

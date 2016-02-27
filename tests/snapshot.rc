@@ -3,7 +3,7 @@
 LVM_DEFINED=0
 LVM_PREFIX="patchy_snap"
 LVM_COUNT=0
-VHD_SIZE="1G"
+VHD_SIZE="300M"
 
 #This function will init B# bricks
 #This is used when launch_cluster is
@@ -158,8 +158,8 @@ function _create_lv() {
     local dir=$1
     local num=$2
     local vg="VG$num"
-    local thinpoolsize="0.8G"
-    local virtualsize="0.6G"
+    local thinpoolsize="200M"
+    local virtualsize="150M"
 
     /sbin/pvcreate $dir/${LVM_PREFIX}_loop
     /sbin/vgcreate ${!vg} $dir/${LVM_PREFIX}_loop
@@ -431,6 +431,22 @@ function uss_count_snap_displayed() {
         ls $path/.snaps | wc -l
 }
 
+function snap_info_volume()
+{
+        eval local cli_index=\$$1
+        local var=$2
+        local vol=$3
+        $cli_index snapshot info volume $vol | grep "^$var" | sed 's/.*: //'
+}
+
+function snap_config_volume()
+{
+        eval local cli_index=\$$1
+        local var=$2
+        local vol=$3
+        $cli_index snapshot config $vol| grep "^$var" | sed 's/.*: //'
+}
+
 #return specific fields of xml output
 function get-cmd-field-xml()
 {
@@ -443,6 +459,13 @@ function get-cmd-field-xml()
         PATTERN=$2
 
         $cli $COMMAND --xml | xmllint --format - | grep $PATTERN
+}
+
+function get_snap_brick_status()
+{
+    local snap=$1;
+
+    $CLI snapshot status $snap | grep "Brick Running" | sed 's/.*: //';
 }
 
 case $OSTYPE in

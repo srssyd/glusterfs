@@ -13,6 +13,7 @@
 #include "gfdb_sqlite3.h"
 #include "ctr-helper.h"
 #include "ctr-messages.h"
+#include "syscall.h"
 
 /*******************************inode forget***********************************/
 
@@ -106,7 +107,6 @@ ctr_lookup_wind(call_frame_t                    *frame,
                         goto out;
                 };
                 ctr_local = frame->local;
-                ctr_local->client_pid = frame->root->pid;
                 /*Definately no internal fops will reach here*/
                 ctr_local->is_internal_fop = _gf_false;
                 /*Dont record counters*/
@@ -128,8 +128,6 @@ ctr_lookup_wind(call_frame_t                    *frame,
                         *((NEW_LINK_CX(ctr_inode_cx))->pargfid));
                 strcpy (CTR_DB_REC(ctr_local).file_name,
                         NEW_LINK_CX(ctr_inode_cx)->basename);
-                strcpy (CTR_DB_REC(ctr_local).file_path,
-                        NEW_LINK_CX(ctr_inode_cx)->basepath);
 
                 /* Since we are in lookup we can ignore errors while
                  * Inserting in the DB, because there may be many
@@ -214,7 +212,6 @@ ctr_lookup_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         gf_boolean_t    _is_heal_needed         = _gf_false;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
-        CTR_IF_INTERNAL_FOP_THEN_GOTO (frame, dict, out);
 
         /* if the lookup failed lookup dont do anything*/
         if (op_ret == -1) {
@@ -330,12 +327,11 @@ ctr_lookup (call_frame_t *frame, xlator_t *this,
         GF_ASSERT(frame->root);
 
         /* Dont handle nameless lookups*/
-        if (!loc->parent)
+        if (!loc->parent || !loc->name)
                 goto out;
 
         /*fill ctr link context*/
-        FILL_CTR_LINK_CX(_link_cx, loc->parent->gfid, loc->name,
-                        loc->path, out);
+        FILL_CTR_LINK_CX(_link_cx, loc->parent->gfid, loc->name, out);
 
          /* Fill ctr inode context*/
          /* IA_IFREG : We assume its a file in the wind
@@ -353,7 +349,7 @@ ctr_lookup (call_frame_t *frame, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_LINK_WIND_FAILED,
-                        "Failed inserting link wind");
+                        "Failed to insert link wind");
         }
 
 out:
@@ -374,18 +370,21 @@ ctr_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 {
         int ret = -1;
 
-        CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IS_DISABLED_THEN_GOTO (this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
-        ret = ctr_insert_unwind(frame, this,
+        ret = ctr_insert_unwind (frame, this,
                         GFDB_FOP_INODE_WRITE, GFDB_FOP_UNWIND);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_WRITEV_UNWIND_FAILED,
-                        "Failed inserting writev unwind");
+                        "Failed to insert writev unwind");
         }
 
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (writev, frame, op_ret, op_errno, prebuf,
                         postbuf, xdata);
 
@@ -415,7 +414,7 @@ ctr_writev (call_frame_t *frame, xlator_t *this, fd_t *fd,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_WRITEV_WIND_FAILED,
-                        "Failed inserting writev wind");
+                        "Failed to insert writev wind");
         }
 
 out:
@@ -438,16 +437,19 @@ ctr_setattr_cbk (call_frame_t *frame,
         int ret = -1;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
         ret = ctr_insert_unwind(frame, this,
                         GFDB_FOP_INODE_WRITE, GFDB_FOP_UNWIND);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_SETATTR_UNWIND_FAILED,
-                        "Failed inserting setattr unwind");
+                        "Failed to insert setattr unwind");
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (setattr, frame, op_ret, op_errno, preop_stbuf,
                        postop_stbuf, xdata);
 
@@ -466,6 +468,7 @@ ctr_setattr (call_frame_t *frame,
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
         CTR_IF_INTERNAL_FOP_THEN_GOTO (frame, xdata, out);
+        CTR_RECORD_METADATA_HEAT_IS_DISABLED_THEN_GOTO (this, out);
 
          /*Fill ctr inode context*/
         FILL_CTR_INODE_CONTEXT(_inode_cx, loc->inode->ia_type,
@@ -477,7 +480,7 @@ ctr_setattr (call_frame_t *frame,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_SETATTR_WIND_FAILED,
-                        "Failed inserting setattr wind");
+                        "Failed to insert setattr wind");
         }
 out:
 
@@ -488,6 +491,68 @@ out:
         return 0;
 }
 
+/*************************** fsetattr ***************************************/
+int32_t
+ctr_fsetattr_cbk (call_frame_t *frame,
+                        void *cookie, xlator_t *this, int32_t op_ret,
+                        int32_t op_errno, struct iatt *preop_stbuf,
+                        struct iatt *postop_stbuf, dict_t *xdata)
+{
+        int ret = -1;
+
+        CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
+
+        ret = ctr_insert_unwind(frame, this,
+                        GFDB_FOP_INODE_WRITE, GFDB_FOP_UNWIND);
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_INSERT_SETATTR_UNWIND_FAILED,
+                        "Failed to insert fsetattr unwind");
+        }
+
+out:
+        ctr_free_frame_local (frame);
+
+        STACK_UNWIND_STRICT (fsetattr, frame, op_ret, op_errno,
+                                preop_stbuf, postop_stbuf, xdata);
+
+        return 0;
+}
+
+
+int32_t
+ctr_fsetattr (call_frame_t *frame,
+                    xlator_t *this, fd_t *fd,
+                    struct iatt *stbuf, int32_t valid, dict_t *xdata)
+{
+        int ret = -1;
+        gf_ctr_inode_context_t ctr_inode_cx;
+        gf_ctr_inode_context_t *_inode_cx = &ctr_inode_cx;
+
+        CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_INTERNAL_FOP_THEN_GOTO (frame, xdata, out);
+        CTR_RECORD_METADATA_HEAT_IS_DISABLED_THEN_GOTO (this, out);
+
+         /*Fill ctr inode context*/
+        FILL_CTR_INODE_CONTEXT(_inode_cx, fd->inode->ia_type,
+                fd->inode->gfid, NULL, NULL, GFDB_FOP_INODE_WRITE,
+                GFDB_FOP_WIND);
+
+        /*record into the database*/
+        ret = ctr_insert_wind(frame, this, _inode_cx);
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_INSERT_SETATTR_WIND_FAILED,
+                        "Failed to insert fsetattr wind");
+        }
+out:
+        STACK_WIND (frame, ctr_fsetattr_cbk,
+                    FIRST_CHILD (this), FIRST_CHILD (this)->fops->fsetattr,
+                    fd, stbuf, valid, xdata);
+
+        return 0;
+}
 /****************************fremovexattr************************************/
 
 int32_t
@@ -497,17 +562,19 @@ ctr_fremovexattr_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         int ret = -1;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
-
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
         ret = ctr_insert_unwind(frame, this,
                         GFDB_FOP_INODE_WRITE, GFDB_FOP_UNWIND);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_FREMOVEXATTR_UNWIND_FAILED,
-                        "Failed inserting fremovexattr unwind");
+                        "Failed to insert fremovexattr unwind");
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (fremovexattr, frame, op_ret, op_errno, xdata);
 
         return 0;
@@ -523,7 +590,7 @@ ctr_fremovexattr (call_frame_t *frame, xlator_t *this, fd_t *fd,
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
         CTR_IF_INTERNAL_FOP_THEN_GOTO (frame, xdata, out);
-
+        CTR_RECORD_METADATA_HEAT_IS_DISABLED_THEN_GOTO (this, out);
 
          /*Fill ctr inode context*/
         FILL_CTR_INODE_CONTEXT(_inode_cx, fd->inode->ia_type,
@@ -535,7 +602,7 @@ ctr_fremovexattr (call_frame_t *frame, xlator_t *this, fd_t *fd,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_FREMOVEXATTR_WIND_FAILED,
-                        "Failed inserting fremovexattr wind");
+                        "Failed to insert fremovexattr wind");
         }
 
 out:
@@ -554,6 +621,7 @@ ctr_removexattr_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         int ret = -1;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
         CTR_IF_INTERNAL_FOP_THEN_GOTO (frame, xdata, out);
 
 
@@ -562,10 +630,12 @@ ctr_removexattr_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_REMOVEXATTR_UNWIND_FAILED,
-                        "Failed inserting removexattr unwind");
+                        "Failed to insert removexattr unwind");
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (removexattr, frame, op_ret, op_errno, xdata);
 
         return 0;
@@ -581,7 +651,7 @@ ctr_removexattr (call_frame_t *frame, xlator_t *this, loc_t *loc,
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
         CTR_IF_INTERNAL_FOP_THEN_GOTO (frame, xdata, out);
-
+        CTR_RECORD_METADATA_HEAT_IS_DISABLED_THEN_GOTO (this, out);
 
          /*Fill ctr inode context*/
         FILL_CTR_INODE_CONTEXT(_inode_cx, loc->inode->ia_type,
@@ -593,7 +663,7 @@ ctr_removexattr (call_frame_t *frame, xlator_t *this, loc_t *loc,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_REMOVEXATTR_WIND_FAILED,
-                        "Failed inserting removexattr wind");
+                        "Failed to insert removexattr wind");
         }
 
 out:
@@ -613,18 +683,20 @@ ctr_truncate_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         int ret = -1;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
-
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
         ret = ctr_insert_unwind(frame, this,
                         GFDB_FOP_INODE_WRITE, GFDB_FOP_UNWIND);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_TRUNCATE_UNWIND_FAILED,
-                        "Failed inserting truncate unwind");
+                        "Failed to insert truncate unwind");
         }
 
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (truncate, frame, op_ret, op_errno, prebuf,
                       postbuf, xdata);
 
@@ -652,7 +724,7 @@ ctr_truncate (call_frame_t *frame, xlator_t *this, loc_t *loc,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_TRUNCATE_WIND_FAILED,
-                        "Failed inserting truncate wind");
+                        "Failed to insert truncate wind");
         }
 out:
         STACK_WIND (frame, ctr_truncate_cbk, FIRST_CHILD (this),
@@ -671,16 +743,19 @@ ctr_ftruncate_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         int ret = -1;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
         ret = ctr_insert_unwind(frame, this,
                         GFDB_FOP_INODE_WRITE, GFDB_FOP_UNWIND);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_FTRUNCATE_UNWIND_FAILED,
-                        "Failed inserting ftruncate unwind");
+                        "Failed to insert ftruncate unwind");
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (ftruncate, frame, op_ret, op_errno, prebuf,
                       postbuf, xdata);
 
@@ -708,7 +783,7 @@ ctr_ftruncate (call_frame_t *frame, xlator_t *this, fd_t *fd,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_FTRUNCATE_WIND_FAILED,
-                        "Failed inserting ftruncate wind");
+                        "Failed to insert ftruncate wind");
         }
 
 out:
@@ -719,7 +794,6 @@ out:
 }
 
 /****************************rename******************************************/
-
 int32_t
 ctr_rename_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                     int32_t op_ret, int32_t op_errno, struct iatt *buf,
@@ -727,19 +801,78 @@ ctr_rename_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                     struct iatt *prenewparent, struct iatt *postnewparent,
                     dict_t *xdata)
 {
-        int ret = -1;
+        int ret                         = -1;
+        uint32_t remaining_links        = -1;
+        gf_ctr_local_t *ctr_local       = NULL;
+        gfdb_fop_type_t fop_type        = GFDB_FOP_INVALID_OP;
+        gfdb_fop_path_t fop_path        = GFDB_FOP_INVALID;
 
-        CTR_IS_DISABLED_THEN_GOTO(this, out);
+        GF_ASSERT(frame);
+        GF_ASSERT(this);
 
-        ret = ctr_insert_unwind(frame, this,
+        CTR_IS_DISABLED_THEN_GOTO (this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
+
+        ret = ctr_insert_unwind (frame, this,
                         GFDB_FOP_DENTRY_WRITE, GFDB_FOP_UNWIND);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_RENAME_UNWIND_FAILED,
-                        "Failed inserting rename unwind");
+                        "Failed to insert rename unwind");
+                goto out;
+        }
+
+        if (!xdata)
+                goto out;
+        /*
+         *
+         * Extracting GF_RESPONSE_LINK_COUNT_XDATA from POSIX Xlator
+         * This is only set when we are overwriting hardlinks.
+         *
+         * */
+        ret = dict_get_uint32 (xdata , GF_RESPONSE_LINK_COUNT_XDATA,
+                                &remaining_links);
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_GET_CTR_RESPONSE_LINK_COUNT_XDATA_FAILED,
+                        "Failed to getting GF_RESPONSE_LINK_COUNT_XDATA");
+                remaining_links = -1;
+                goto out;
+        }
+
+        ctr_local = frame->local;
+
+        /* This is not the only link */
+        if (remaining_links > 1) {
+                fop_type = GFDB_FOP_DENTRY_WRITE;
+                fop_path = GFDB_FOP_UNDEL;
+        }
+        /* Last link that was deleted */
+        else if (remaining_links == 1) {
+                fop_type = GFDB_FOP_DENTRY_WRITE;
+                fop_path = GFDB_FOP_UNDEL_ALL;
+        } else {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_INSERT_RENAME_UNWIND_FAILED,
+                        "Invalid link count from posix");
+                goto out;
+        }
+
+        ret = ctr_delete_hard_link_from_db (this,
+                                    CTR_DB_REC(ctr_local).old_gfid,
+                                    CTR_DB_REC(ctr_local).pargfid,
+                                    CTR_DB_REC(ctr_local).file_name,
+                                    fop_type, fop_path);
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_INSERT_UNLINK_UNWIND_FAILED,
+                        "Failed to delete records of %s",
+                        CTR_DB_REC(ctr_local).old_file_name);
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (rename, frame, op_ret, op_errno, buf,
                              preoldparent, postoldparent, prenewparent,
                              postnewparent,
@@ -752,35 +885,52 @@ int32_t
 ctr_rename (call_frame_t *frame, xlator_t *this, loc_t *oldloc,
                 loc_t *newloc, dict_t *xdata)
 {
-        int ret = -1;
+        int ret                                         = -1;
         gf_ctr_inode_context_t ctr_inode_cx;
-        gf_ctr_inode_context_t *_inode_cx = &ctr_inode_cx;
+        gf_ctr_inode_context_t *_inode_cx               = &ctr_inode_cx;
         gf_ctr_link_context_t new_link_cx, old_link_cx;
-        gf_ctr_link_context_t *_nlink_cx = &new_link_cx;
-        gf_ctr_link_context_t *_olink_cx = &old_link_cx;
+        gf_ctr_link_context_t *_nlink_cx                = &new_link_cx;
+        gf_ctr_link_context_t *_olink_cx                = &old_link_cx;
+        int is_dict_created                             = 0;
+        ctr_xlator_ctx_t *ctr_xlator_ctx                = NULL;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
         CTR_IF_INTERNAL_FOP_THEN_GOTO (frame, xdata, out);
 
         /*Fill old link context*/
-        FILL_CTR_LINK_CX(_olink_cx, oldloc->pargfid, oldloc->name,
-                        oldloc->path, out);
+        FILL_CTR_LINK_CX(_olink_cx, oldloc->pargfid, oldloc->name, out);
 
         /*Fill new link context*/
-        FILL_CTR_LINK_CX(_nlink_cx, newloc->pargfid, newloc->name,
-                        newloc->path, out);
+        FILL_CTR_LINK_CX(_nlink_cx, newloc->pargfid, newloc->name, out);
 
          /*Fill ctr inode context*/
         FILL_CTR_INODE_CONTEXT(_inode_cx, oldloc->inode->ia_type,
                 oldloc->inode->gfid, _nlink_cx, _olink_cx,
                 GFDB_FOP_DENTRY_WRITE, GFDB_FOP_WIND);
 
+
+        /* If the rename is a overwrite of hardlink
+         * rename ("file1", "file2")
+         * file1 is hardlink for gfid say 00000000-0000-0000-0000-00000000000A
+         * file2 is hardlink for gfid say 00000000-0000-0000-0000-00000000000B
+         * so we are saving file2 gfid in old_gfid so that we delete entries
+         * from the db during rename callback if the fop is successful
+         * */
+        if (newloc->inode) {
+                /* This is the GFID from where the newloc hardlink will be
+                 * unlinked */
+                _inode_cx->old_gfid = &newloc->inode->gfid;
+        }
+
+        /* Is a metatdata fop */
+        _inode_cx->is_metadata_fop = _gf_true;
+
         /*record into the database*/
         ret = ctr_insert_wind(frame, this, _inode_cx);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_RENAME_WIND_FAILED,
-                        "Failed inserting rename wind");
+                        "Failed to insert rename wind");
         } else {
                 /* We are doing updation of hard link in inode context in wind
                  * As we dont get the "inode" in the call back for rename */
@@ -789,6 +939,45 @@ ctr_rename (call_frame_t *frame, xlator_t *this, loc_t *oldloc,
                         gf_msg (this->name, GF_LOG_ERROR, 0,
                                 CTR_MSG_UPDATE_HARDLINK_FAILED, "Failed "
                                 "updating hard link in ctr inode context");
+                        goto out;
+                }
+
+                /* If the newloc has an inode. i.e aquiring hardlink of an
+                 * exisitng file i.e overwritting a file.
+                 * */
+                if (newloc->inode) {
+
+                        /* Getting the ctr inode context variable for
+                         * inode whose hardlink will be aquired during
+                         * the rename
+                         * */
+                        ctr_xlator_ctx = get_ctr_xlator_ctx (this,
+                                                                newloc->inode);
+                        if (!ctr_xlator_ctx) {
+                                /* Since there is no ctr inode context
+                                 * so nothing more to do */
+                                ret = 0;
+                                goto out;
+                        }
+
+                        /* Deleting hardlink from context variable */
+                        ret = ctr_delete_hard_link (this, ctr_xlator_ctx,
+                                                newloc->pargfid, newloc->name);
+                        if (ret) {
+                                gf_msg (this->name, GF_LOG_ERROR, 0,
+                                        CTR_MSG_DELETE_HARDLINK_FAILED,
+                                        "Failed to delete hard link");
+                                goto out;
+                        }
+
+                        /* Requesting for number of hardlinks on the newloc
+                         * inode from POSIX.
+                         * */
+                        is_dict_created = set_posix_link_request (this, &xdata);
+                        if (is_dict_created == -1) {
+                                ret = -1;
+                                goto out;
+                        }
                 }
         }
 
@@ -796,6 +985,11 @@ out:
         STACK_WIND (frame, ctr_rename_cbk, FIRST_CHILD (this),
                     FIRST_CHILD (this)->fops->rename,
                     oldloc, newloc, xdata);
+
+        if (is_dict_created == 1) {
+                dict_unref (xdata);
+        }
+
         return 0;
 }
 
@@ -809,21 +1003,22 @@ ctr_unlink_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         uint32_t remaining_links                = -1;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
         if (!xdata)
                 goto out;
 
         /*
          *
-         * Extracting CTR_RESPONSE_LINK_COUNT_XDATA from POSIX Xlator
+         * Extracting GF_RESPONSE_LINK_COUNT_XDATA from POSIX Xlator
          *
          * */
-        ret = dict_get_uint32 (xdata , CTR_RESPONSE_LINK_COUNT_XDATA,
+        ret = dict_get_uint32 (xdata , GF_RESPONSE_LINK_COUNT_XDATA,
                                 &remaining_links);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_GET_CTR_RESPONSE_LINK_COUNT_XDATA_FAILED,
-                        "Failed to getting CTR_RESPONSE_LINK_COUNT_XDATA");
+                        "Failed to getting GF_RESPONSE_LINK_COUNT_XDATA");
                 remaining_links = -1;
         }
 
@@ -835,7 +1030,7 @@ ctr_unlink_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                 if (ret) {
                         gf_msg (this->name, GF_LOG_ERROR, 0,
                                 CTR_MSG_INSERT_UNLINK_UNWIND_FAILED,
-                                "Failed inserting unlink unwind");
+                                "Failed to insert unlink unwind");
                 }
         }
         /*Last link that was deleted*/
@@ -846,13 +1041,15 @@ ctr_unlink_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                 if (ret) {
                         gf_msg (this->name, GF_LOG_ERROR, 0,
                                 CTR_MSG_INSERT_UNLINK_UNWIND_FAILED,
-                                "Failed inserting unlink unwind");
+                                "Failed to insert unlink unwind");
                 }
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (unlink, frame, op_ret, op_errno, preparent,
-                        postparent, NULL);
+                             postparent, xdata);
 
         return 0;
 }
@@ -874,7 +1071,7 @@ ctr_unlink (call_frame_t *frame, xlator_t *this,
         CTR_IS_DISABLED_THEN_GOTO(this, out);
 
         /*Fill link context*/
-        FILL_CTR_LINK_CX(_link_cx, loc->pargfid, loc->name, loc->path, out);
+        FILL_CTR_LINK_CX(_link_cx, loc->pargfid, loc->name, out);
 
          /*Fill ctr inode context*/
         FILL_CTR_INODE_CONTEXT(_inode_cx, loc->inode->ia_type,
@@ -882,7 +1079,10 @@ ctr_unlink (call_frame_t *frame, xlator_t *this,
                 GFDB_FOP_DENTRY_WRITE, GFDB_FOP_WDEL);
 
         /*Internal FOP*/
-        _inode_cx->is_internal_fop = CTR_IS_INTERNAL_FOP(frame, xdata);
+        _inode_cx->is_internal_fop = is_internal_fop (frame, xdata);
+
+        /* Is a metadata FOP */
+        _inode_cx->is_metadata_fop = _gf_true;
 
         /* If its a internal FOP and dht link file donot record*/
         if (_inode_cx->is_internal_fop &&
@@ -895,7 +1095,7 @@ ctr_unlink (call_frame_t *frame, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_UNLINK_UNWIND_FAILED,
-                        "Failed inserting unlink wind");
+                        "Failed to insert unlink wind");
         } else {
                 /* We are doing delete of hard link in inode context in wind
                  * As we dont get the "inode" in the call back for rename */
@@ -909,7 +1109,7 @@ ctr_unlink (call_frame_t *frame, xlator_t *this,
 
         /*
          *
-         * Sending CTR_REQUEST_LINK_COUNT_XDATA
+         * Sending GF_REQUEST_LINK_COUNT_XDATA
          * to POSIX Xlator to send link count in unwind path
          *
          * */
@@ -921,15 +1121,15 @@ ctr_unlink (call_frame_t *frame, xlator_t *this,
         if (!xdata) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_XDATA_NULL, "xdata is NULL :Cannot send "
-                        "CTR_REQUEST_LINK_COUNT_XDATA to posix");
+                        "GF_REQUEST_LINK_COUNT_XDATA to posix");
                 goto out;
         }
 
-        ret = dict_set_int32 (xdata, CTR_REQUEST_LINK_COUNT_XDATA, 1);
+        ret = dict_set_int32 (xdata, GF_REQUEST_LINK_COUNT_XDATA, 1);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_SET_CTR_RESPONSE_LINK_COUNT_XDATA_FAILED,
-                        "Failed setting CTR_REQUEST_LINK_COUNT_XDATA");
+                        "Failed setting GF_REQUEST_LINK_COUNT_XDATA");
                 if (is_xdata_created) {
                         dict_unref (xdata);
                 }
@@ -956,16 +1156,19 @@ ctr_fsync_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         int ret = -1;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
         ret = ctr_insert_unwind(frame, this, GFDB_FOP_INODE_WRITE,
                                 GFDB_FOP_UNWIND);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_FSYNC_UNWIND_FAILED,
-                        "Failed inserting fsync unwind");
+                        "Failed to insert fsync unwind");
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (fsync, frame, op_ret, op_errno, prebuf, postbuf,
                       xdata);
 
@@ -993,7 +1196,7 @@ ctr_fsync (call_frame_t *frame, xlator_t *this, fd_t *fd,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_FSYNC_WIND_FAILED,
-                        "Failed inserting fsync wind");
+                        "Failed to insert fsync wind");
         }
 
 out:
@@ -1018,11 +1221,12 @@ ctr_setxattr_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_FSYNC_UNWIND_FAILED,
-                        "Failed inserting fsync unwind");
+                        "Failed to insert setxattr unwind");
         }
 
-
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (setxattr, frame, op_ret, op_errno, xdata);
 
         return 0;
@@ -1038,6 +1242,7 @@ ctr_setxattr (call_frame_t *frame, xlator_t *this,
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
         CTR_IF_INTERNAL_FOP_THEN_GOTO (frame, xdata, out);
+        CTR_RECORD_METADATA_HEAT_IS_DISABLED_THEN_GOTO (this, out);
 
          /*Fill ctr inode context*/
         FILL_CTR_INODE_CONTEXT(_inode_cx, loc->inode->ia_type,
@@ -1049,7 +1254,7 @@ ctr_setxattr (call_frame_t *frame, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_SETATTR_WIND_FAILED,
-                        "Failed inserting setxattr wind");
+                        "Failed to insert setxattr wind");
         }
 
 out:
@@ -1058,7 +1263,64 @@ out:
                     loc, xattr, flags, xdata);
         return 0;
 }
+/**************************** fsetxattr *************************************/
+int32_t
+ctr_fsetxattr_cbk (call_frame_t *frame,
+                         void *cookie, xlator_t *this, int32_t op_ret,
+                         int32_t op_errno, dict_t *xdata)
+{
+        int ret = -1;
 
+        CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
+
+        ret = ctr_insert_unwind(frame, this, GFDB_FOP_INODE_WRITE,
+                                GFDB_FOP_UNWIND);
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_INSERT_FSYNC_UNWIND_FAILED,
+                        "Failed to insert fsetxattr unwind");
+        }
+
+out:
+        ctr_free_frame_local (frame);
+
+        STACK_UNWIND_STRICT (fsetxattr, frame, op_ret, op_errno, xdata);
+
+        return 0;
+}
+
+int32_t
+ctr_fsetxattr (call_frame_t *frame, xlator_t *this, fd_t *fd, dict_t *dict,
+               int32_t flags, dict_t *xdata)
+{
+        int ret = -1;
+        gf_ctr_inode_context_t ctr_inode_cx;
+        gf_ctr_inode_context_t *_inode_cx = &ctr_inode_cx;
+
+        CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_INTERNAL_FOP_THEN_GOTO (frame, xdata, out);
+        CTR_RECORD_METADATA_HEAT_IS_DISABLED_THEN_GOTO (this, out);
+
+         /*Fill ctr inode context*/
+        FILL_CTR_INODE_CONTEXT(_inode_cx, fd->inode->ia_type,
+                fd->inode->gfid, NULL, NULL,
+                GFDB_FOP_INODE_WRITE, GFDB_FOP_WIND);
+
+        /*record into the database*/
+        ret = ctr_insert_wind(frame, this, _inode_cx);
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_INSERT_SETATTR_WIND_FAILED,
+                        "Failed to insert fsetxattr wind");
+        }
+
+out:
+        STACK_WIND (frame, ctr_fsetxattr_cbk,
+                    FIRST_CHILD (this), FIRST_CHILD (this)->fops->fsetxattr,
+                    fd, dict, flags, xdata);
+        return 0;
+}
 /****************************mknod*******************************************/
 
 
@@ -1072,6 +1334,7 @@ ctr_mknod_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         ctr_heal_ret_val_t ret_val = CTR_CTX_ERROR;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
         /* Add hard link to the list */
         ret_val = add_hard_link_ctx (frame, this, inode);
@@ -1084,10 +1347,12 @@ ctr_mknod_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_MKNOD_UNWIND_FAILED,
-                        "Failed inserting mknod unwind");
+                        "Failed to insert mknod unwind");
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (mknod, frame, op_ret, op_errno, inode, buf,
                 preparent, postparent, xdata);
 
@@ -1123,7 +1388,7 @@ ctr_mknod (call_frame_t *frame, xlator_t *this,
         gf_uuid_copy (gfid, uuid_req);
 
         /*fill ctr link context*/
-        FILL_CTR_LINK_CX (_link_cx, loc->pargfid, loc->name, loc->path, out);
+        FILL_CTR_LINK_CX (_link_cx, loc->pargfid, loc->name, out);
 
          /*Fill ctr inode context*/
         FILL_CTR_INODE_CONTEXT (_inode_cx, loc->inode->ia_type,
@@ -1135,7 +1400,7 @@ ctr_mknod (call_frame_t *frame, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_MKNOD_WIND_FAILED,
-                        "Failed inserting mknod wind");
+                        "Failed to insert mknod wind");
         }
 
 out:
@@ -1156,7 +1421,7 @@ ctr_create_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         int ret = -1;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
-
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
         ret = add_hard_link_ctx (frame, this, inode);
         if (ret) {
@@ -1170,10 +1435,12 @@ ctr_create_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_CREATE_UNWIND_FAILED,
-                        "Failed inserting create unwind");
+                        "Failed to insert create unwind");
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (create, frame, op_ret, op_errno, fd, inode,
                              stbuf,
                         preparent, postparent, xdata);
@@ -1212,7 +1479,7 @@ ctr_create (call_frame_t *frame, xlator_t *this,
         gf_uuid_copy (gfid, uuid_req);
 
         /*fill ctr link context*/
-        FILL_CTR_LINK_CX(_link_cx, loc->pargfid, loc->name, loc->path, out);
+        FILL_CTR_LINK_CX(_link_cx, loc->pargfid, loc->name, out);
 
          /*Fill ctr inode context*/
         FILL_CTR_INODE_CONTEXT(_inode_cx, loc->inode->ia_type,
@@ -1220,7 +1487,7 @@ ctr_create (call_frame_t *frame, xlator_t *this,
                 GFDB_FOP_CREATE_WRITE, GFDB_FOP_WIND);
 
         /*Internal FOP*/
-        _inode_cx->is_internal_fop = CTR_IS_INTERNAL_FOP(frame, xdata);
+        _inode_cx->is_internal_fop = is_internal_fop (frame, xdata);
 
         /* If its a internal FOP and dht link file donot record*/
         if (_inode_cx->is_internal_fop &&
@@ -1233,7 +1500,7 @@ ctr_create (call_frame_t *frame, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_CREATE_WIND_FAILED,
-                        "Failed inserting create wind");
+                        "Failed to insert create wind");
         }
 out:
         STACK_WIND (frame, ctr_create_cbk, FIRST_CHILD (this),
@@ -1253,6 +1520,7 @@ ctr_link_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         int ret = -1;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
         /* Add hard link to the list */
         ret = add_hard_link_ctx (frame, this, inode);
@@ -1265,10 +1533,12 @@ ctr_link_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_CREATE_UNWIND_FAILED,
-                        "Failed inserting create unwind");
+                        "Failed to insert create unwind");
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (link, frame, op_ret, op_errno, inode, stbuf,
                        preparent, postparent, xdata);
         return 0;
@@ -1291,8 +1561,7 @@ ctr_link (call_frame_t *frame, xlator_t *this,
         GF_ASSERT(frame->root);
 
         /*fill ctr link context*/
-        FILL_CTR_LINK_CX(_link_cx, newloc->pargfid, newloc->name,
-                        newloc->path, out);
+        FILL_CTR_LINK_CX(_link_cx, newloc->pargfid, newloc->name, out);
 
          /*Fill ctr inode context*/
         FILL_CTR_INODE_CONTEXT(_inode_cx, oldloc->inode->ia_type,
@@ -1300,7 +1569,10 @@ ctr_link (call_frame_t *frame, xlator_t *this,
                 GFDB_FOP_DENTRY_WRITE, GFDB_FOP_WIND);
 
         /*Internal FOP*/
-        _inode_cx->is_internal_fop = CTR_IS_INTERNAL_FOP(frame, xdata);
+        _inode_cx->is_internal_fop = is_internal_fop (frame, xdata);
+
+        /* Is a metadata fop */
+        _inode_cx->is_metadata_fop = _gf_true;
 
         /* If its a internal FOP and dht link file donot record*/
         if (_inode_cx->is_internal_fop &&
@@ -1314,7 +1586,7 @@ ctr_link (call_frame_t *frame, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_LINK_WIND_FAILED,
-                        "Failed inserting link wind");
+                        "Failed to insert link wind");
         }
 
 out:
@@ -1333,16 +1605,19 @@ int ctr_readv_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         int ret = -1;
 
         CTR_IS_DISABLED_THEN_GOTO(this, out);
+        CTR_IF_FOP_FAILED_THEN_GOTO (this, op_ret, op_errno, out);
 
         ret = ctr_insert_unwind(frame, this, GFDB_FOP_INODE_READ,
                                 GFDB_FOP_UNWIND);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_CREATE_UNWIND_FAILED,
-                        "Failed inserting create unwind");
+                        "Failed to insert create unwind");
         }
 
 out:
+        ctr_free_frame_local (frame);
+
         STACK_UNWIND_STRICT (readv, frame, op_ret, op_errno, vector, count,
                                 stbuf, iobref, xdata);
         return 0;
@@ -1370,7 +1645,7 @@ ctr_readv (call_frame_t *frame, xlator_t *this,
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_INSERT_READV_WIND_FAILED,
-                        "Failed inserting readv wind");
+                        "Failed to insert readv wind");
         }
 
 out:
@@ -1382,70 +1657,371 @@ out:
 
 /*******************************ctr_ipc****************************************/
 
+/*This is the call back function per record/file from data base*/
+static int
+ctr_db_query_callback (gfdb_query_record_t *gfdb_query_record,
+                        void *args) {
+        int ret = -1;
+        ctr_query_cbk_args_t *query_cbk_args = args;
+
+        GF_VALIDATE_OR_GOTO ("ctr", query_cbk_args, out);
+
+        ret = gfdb_write_query_record (query_cbk_args->query_fd,
+                                       gfdb_query_record);
+        if (ret) {
+                gf_msg ("ctr", GF_LOG_ERROR, 0,
+                        CTR_MSG_FATAL_ERROR,
+                        "Failed to write to query file");
+                goto out;
+        }
+
+        query_cbk_args->count++;
+
+        ret = 0;
+out:
+        return ret;
+}
+
+/* This function does all the db queries related to tiering and
+ * generates/populates new/existing query file
+ * inputs:
+ * xlator_t *this : CTR Translator
+ * void *conn_node : Database connection
+ * char *query_file: the query file that needs to be updated
+ * gfdb_ipc_ctr_params_t *ipc_ctr_params: the query parameters
+ * Return:
+ * On success 0
+ * On failure -1
+ * */
+int
+ctr_db_query (xlator_t *this,
+              void *conn_node,
+              char *query_file,
+              gfdb_ipc_ctr_params_t *ipc_ctr_params)
+{
+        int ret = -1;
+        ctr_query_cbk_args_t query_cbk_args = {0};
+
+        GF_VALIDATE_OR_GOTO ("ctr", this, out);
+        GF_VALIDATE_OR_GOTO (this->name, conn_node, out);
+        GF_VALIDATE_OR_GOTO (this->name, query_file, out);
+        GF_VALIDATE_OR_GOTO (this->name, ipc_ctr_params, out);
+
+        /*Query for eligible files from db*/
+        query_cbk_args.query_fd = open (query_file,
+                        O_WRONLY | O_CREAT | O_APPEND,
+                        S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+        if (query_cbk_args.query_fd < 0) {
+                gf_msg (this->name, GF_LOG_ERROR, errno,
+                        CTR_MSG_FATAL_ERROR,
+                        "Failed to open query file %s", query_file);
+                goto out;
+        }
+        if (!ipc_ctr_params->is_promote) {
+                if (ipc_ctr_params->write_freq_threshold == 0 &&
+                        ipc_ctr_params->read_freq_threshold == 0) {
+                                ret = find_unchanged_for_time (
+                                        conn_node,
+                                        ctr_db_query_callback,
+                                        (void *)&query_cbk_args,
+                                        &ipc_ctr_params->time_stamp);
+                } else {
+                                ret = find_unchanged_for_time_freq (
+                                        conn_node,
+                                        ctr_db_query_callback,
+                                        (void *)&query_cbk_args,
+                                        &ipc_ctr_params->time_stamp,
+                                        ipc_ctr_params->write_freq_threshold,
+                                        ipc_ctr_params->read_freq_threshold,
+                                        _gf_false);
+                }
+        } else {
+                if (ipc_ctr_params->write_freq_threshold == 0 &&
+                        ipc_ctr_params->read_freq_threshold == 0) {
+                        ret = find_recently_changed_files (
+                                conn_node,
+                                ctr_db_query_callback,
+                                (void *)&query_cbk_args,
+                                &ipc_ctr_params->time_stamp);
+                } else {
+                        ret = find_recently_changed_files_freq (
+                                conn_node,
+                                ctr_db_query_callback,
+                                (void *)&query_cbk_args,
+                                &ipc_ctr_params->time_stamp,
+                                ipc_ctr_params->write_freq_threshold,
+                                ipc_ctr_params->read_freq_threshold,
+                                _gf_false);
+                }
+        }
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_FATAL_ERROR,
+                        "FATAL: query from db failed");
+                        goto out;
+        }
+
+        ret = clear_files_heat (conn_node);
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_FATAL_ERROR,
+                        "FATAL: Failed to clear db entries");
+                        goto out;
+        }
+
+        ret = 0;
+out:
+
+        if (!ret)
+                ret = query_cbk_args.count;
+
+        if (query_cbk_args.query_fd >= 0) {
+                sys_close (query_cbk_args.query_fd);
+                query_cbk_args.query_fd = -1;
+        }
+
+        return ret;
+}
+
+
+int
+ctr_ipc_helper (xlator_t *this, dict_t *in_dict,
+                dict_t *out_dict)
+{
+        int ret = -1;
+        char *ctr_ipc_ops = NULL;
+        gf_ctr_private_t *priv = NULL;
+        char *db_version = NULL;
+        char *db_param_key = NULL;
+        char *db_param = NULL;
+        char *query_file = NULL;
+        gfdb_ipc_ctr_params_t *ipc_ctr_params = NULL;
+
+
+        GF_VALIDATE_OR_GOTO ("ctr", this, out);
+        GF_VALIDATE_OR_GOTO (this->name, this->private, out);
+        priv = this->private;
+        GF_VALIDATE_OR_GOTO (this->name, priv->_db_conn, out);
+        GF_VALIDATE_OR_GOTO (this->name, in_dict, out);
+        GF_VALIDATE_OR_GOTO (this->name, out_dict, out);
+
+        GET_DB_PARAM_FROM_DICT(this->name, in_dict, GFDB_IPC_CTR_KEY,
+                                ctr_ipc_ops, out);
+
+        /*if its a db clear operation */
+        if (strncmp (ctr_ipc_ops, GFDB_IPC_CTR_CLEAR_OPS,
+                        strlen (GFDB_IPC_CTR_CLEAR_OPS)) == 0) {
+
+                ret = clear_files_heat (priv->_db_conn);
+                if (ret)
+                        goto out;
+
+        } /* if its a query operation, in  which case its query + clear db*/
+        else if (strncmp (ctr_ipc_ops, GFDB_IPC_CTR_QUERY_OPS,
+                                strlen (GFDB_IPC_CTR_QUERY_OPS)) == 0) {
+
+                ret = dict_get_str (in_dict, GFDB_IPC_CTR_GET_QFILE_PATH,
+                                                                &query_file);
+                if (ret) {
+                        gf_msg(this->name, GF_LOG_ERROR, 0, CTR_MSG_SET,
+                                        "Failed extracting query file path");
+                        goto out;
+                }
+
+                ret = dict_get_bin (in_dict, GFDB_IPC_CTR_GET_QUERY_PARAMS,
+                                   (void *)&ipc_ctr_params);
+                if (ret) {
+                        gf_msg(this->name, GF_LOG_ERROR, 0, CTR_MSG_SET,
+                                        "Failed extracting query parameters");
+                        goto out;
+                }
+
+                ret = ctr_db_query (this, priv->_db_conn, query_file,
+                                ipc_ctr_params);
+
+                ret = dict_set_int32 (out_dict,
+                                      GFDB_IPC_CTR_RET_QUERY_COUNT, ret);
+                if (ret) {
+                        gf_msg(this->name, GF_LOG_ERROR, 0, CTR_MSG_SET,
+                                        "Failed setting query reply");
+                        goto out;
+                }
+
+        } /* if its a query for db version */
+        else if (strncmp (ctr_ipc_ops, GFDB_IPC_CTR_GET_DB_VERSION_OPS,
+                        strlen (GFDB_IPC_CTR_GET_DB_VERSION_OPS)) == 0) {
+
+                ret = get_db_version (priv->_db_conn, &db_version);
+                if (ret == -1 || !db_version) {
+                        gf_msg(this->name, GF_LOG_ERROR, 0, CTR_MSG_SET,
+                                        "Failed extracting db version ");
+                        goto out;
+                }
+
+                SET_DB_PARAM_TO_DICT(this->name, out_dict,
+                                        GFDB_IPC_CTR_RET_DB_VERSION,
+                                        db_version, ret, error);
+
+        } /* if its a query for a db setting */
+        else if (strncmp (ctr_ipc_ops, GFDB_IPC_CTR_GET_DB_PARAM_OPS,
+                                strlen (GFDB_IPC_CTR_GET_DB_PARAM_OPS)) == 0) {
+
+                ret = dict_get_str (in_dict, GFDB_IPC_CTR_GET_DB_KEY,
+                                &db_param_key);
+                if (ret) {
+                        gf_msg(this->name, GF_LOG_ERROR, 0, CTR_MSG_SET,
+                                        "Failed extracting db param key");
+                        goto out;
+                }
+
+                ret = get_db_params (priv->_db_conn, db_param_key, &db_param);
+                if (ret == -1 || !db_param) {
+                        goto out;
+                }
+
+                SET_DB_PARAM_TO_DICT(this->name, out_dict,
+                                        db_param_key,
+                                        db_param, ret, error);
+        } /* default case */
+        else {
+                goto out;
+        }
+
+
+        ret = 0;
+        goto out;
+error:
+        GF_FREE (db_param_key);
+        GF_FREE (db_param);
+        GF_FREE (db_version);
+out:
+        return ret;
+}
+
+
 /* IPC Call from tier migrator to clear the heat on the DB */
 int32_t
-ctr_ipc (call_frame_t *frame, xlator_t *this, int32_t op, dict_t *xdata)
+ctr_ipc (call_frame_t *frame, xlator_t *this, int32_t op,
+        dict_t *in_dict)
 {
         int ret                         = -1;
-        gf_ctr_private_t *_priv         = NULL;
+        gf_ctr_private_t *priv         = NULL;
+        dict_t *out_dict                = NULL;
 
         GF_ASSERT(this);
-        _priv = this->private;
-        GF_ASSERT (_priv);
-        GF_ASSERT(_priv->_db_conn);
+        priv = this->private;
+        GF_ASSERT (priv);
+        GF_ASSERT(priv->_db_conn);
+        GF_VALIDATE_OR_GOTO (this->name, in_dict, wind);
+
 
         if (op != GF_IPC_TARGET_CTR)
                 goto wind;
 
-        ret = clear_files_heat (_priv->_db_conn);
+        out_dict = dict_new();
+        if (!out_dict) {
+                goto out;
+        }
 
-        STACK_UNWIND_STRICT (ipc, frame, ret, 0, NULL);
+        ret = ctr_ipc_helper (this, in_dict, out_dict);
+        if (ret) {
+                gf_msg(this->name, GF_LOG_ERROR, 0, CTR_MSG_SET,
+                "Failed in ctr_ipc_helper");
+        }
+out:
+
+        STACK_UNWIND_STRICT (ipc, frame, ret, 0, out_dict);
+
+        if (out_dict)
+                dict_unref(out_dict);
+
         return 0;
 
  wind:
         STACK_WIND (frame, default_ipc_cbk, FIRST_CHILD (this),
-                    FIRST_CHILD (this)->fops->ipc, op, xdata);
+                    FIRST_CHILD (this)->fops->ipc, op, in_dict);
+
+
+
         return 0;
 }
 
 
 /******************************************************************************/
-
 int
 reconfigure (xlator_t *this, dict_t *options)
 {
         char *temp_str = NULL;
         int ret = 0;
-        gf_ctr_private_t *_priv = NULL;
+        gf_ctr_private_t *priv = NULL;
 
-        _priv = this->private;
+        priv = this->private;
         if (dict_get_str(options, "changetimerecorder.frequency",
                          &temp_str)) {
-                gf_msg(this->name, GF_LOG_INFO, 0, CTR_MSG_SET, "set!");
+                gf_msg(this->name, GF_LOG_INFO, 0, CTR_MSG_SET, "set");
         }
 
-        GF_OPTION_RECONF ("ctr-enabled", _priv->enabled, options,
+        GF_OPTION_RECONF ("ctr-enabled", priv->enabled, options,
                           bool, out);
 
-        GF_OPTION_RECONF ("record-counters", _priv->ctr_record_counter, options,
+        GF_OPTION_RECONF ("record-counters", priv->ctr_record_counter, options,
                           bool, out);
 
-        GF_OPTION_RECONF ("ctr_link_consistency", _priv->ctr_link_consistency,
+        GF_OPTION_RECONF ("ctr-record-metadata-heat",
+                          priv->ctr_record_metadata_heat, options,
+                          bool, out);
+
+        GF_OPTION_RECONF ("ctr_link_consistency", priv->ctr_link_consistency,
                         options, bool, out);
 
-        GF_OPTION_RECONF ("ctr_inode_heal_expire_period",
-                                _priv->ctr_inode_heal_expire_period,
+        GF_OPTION_RECONF ("ctr_lookupheal_inode_timeout",
+                                priv->ctr_lookupheal_inode_timeout,
                                 options, uint64, out);
 
-        GF_OPTION_RECONF ("ctr_hardlink_heal_expire_period",
-                                _priv->ctr_hardlink_heal_expire_period,
+        GF_OPTION_RECONF ("ctr_lookupheal_link_timeout",
+                                priv->ctr_lookupheal_link_timeout,
                                 options, uint64, out);
 
-        GF_OPTION_RECONF ("record-exit", _priv->ctr_record_unwind, options,
+        GF_OPTION_RECONF ("record-exit", priv->ctr_record_unwind, options,
                           bool, out);
 
-        GF_OPTION_RECONF ("record-entry", _priv->ctr_record_wind, options,
+        GF_OPTION_RECONF ("record-entry", priv->ctr_record_wind, options,
                           bool, out);
+
+
+
+
+        /* If database is sqlite */
+        if (priv->gfdb_db_type == GFDB_SQLITE3) {
+
+                /* AUTOCHECKPOINT */
+                if (dict_get_str (options, GFDB_SQL_PARAM_WAL_AUTOCHECK,
+                                &temp_str) == 0) {
+                        ret = set_db_params (priv->_db_conn,
+                                        "wal_autocheckpoint", temp_str);
+                        if (ret) {
+                                gf_msg (this->name, GF_LOG_ERROR, 0,
+                                        CTR_MSG_SET_VALUE_TO_SQL_PARAM_FAILED,
+                                        "Failed  to set %s",
+                                        GFDB_SQL_PARAM_WAL_AUTOCHECK);
+                        }
+                }
+
+                /* CACHE_SIZE */
+                if (dict_get_str (options, GFDB_SQL_PARAM_CACHE_SIZE, &temp_str)
+                                == 0) {
+                        ret = set_db_params (priv->_db_conn, "cache_size",
+                                        temp_str);
+                        if (ret) {
+                                gf_msg (this->name, GF_LOG_ERROR, 0,
+                                        CTR_MSG_SET_VALUE_TO_SQL_PARAM_FAILED,
+                                        "Failed  to set %s",
+                                        GFDB_SQL_PARAM_CACHE_SIZE);
+                        }
+                }
+        }
+
+        ret = 0;
 
 out:
 
@@ -1457,7 +2033,7 @@ out:
 int32_t
 init (xlator_t *this)
 {
-        gf_ctr_private_t *_priv = NULL;
+        gf_ctr_private_t *priv = NULL;
         int ret_db              = -1;
         dict_t *params_dict      = NULL;
 
@@ -1476,8 +2052,8 @@ init (xlator_t *this)
                         "dangling volume. check volfile ");
         }
 
-        _priv = GF_CALLOC (1, sizeof (*_priv), gf_ctr_mt_private_t);
-        if (!_priv) {
+        priv = GF_CALLOC (1, sizeof (*priv), gf_ctr_mt_private_t);
+        if (!priv) {
                 gf_msg (this->name, GF_LOG_ERROR, ENOMEM,
                         CTR_MSG_CALLOC_FAILED,
                         "Calloc didnt work!!!");
@@ -1485,20 +2061,20 @@ init (xlator_t *this)
         }
 
         /*Default values for the translator*/
-        _priv->ctr_record_wind          = _gf_true;
-        _priv->ctr_record_unwind        = _gf_false;
-        _priv->ctr_hot_brick            = _gf_false;
-        _priv->gfdb_db_type             = GFDB_SQLITE3;
-        _priv->gfdb_sync_type           = GFDB_DB_SYNC;
-        _priv->enabled                  = _gf_true;
-        _priv->_db_conn                 = NULL;
-        _priv->ctr_hardlink_heal_expire_period =
+        priv->ctr_record_wind          = _gf_true;
+        priv->ctr_record_unwind        = _gf_false;
+        priv->ctr_hot_brick            = _gf_false;
+        priv->gfdb_db_type             = GFDB_SQLITE3;
+        priv->gfdb_sync_type           = GFDB_DB_SYNC;
+        priv->enabled                  = _gf_true;
+        priv->_db_conn                 = NULL;
+        priv->ctr_lookupheal_link_timeout =
                                 CTR_DEFAULT_HARDLINK_EXP_PERIOD;
-        _priv->ctr_inode_heal_expire_period =
+        priv->ctr_lookupheal_inode_timeout =
                                 CTR_DEFAULT_INODE_EXP_PERIOD;
 
         /*Extract ctr xlator options*/
-        ret_db = extract_ctr_options (this, _priv);
+        ret_db = extract_ctr_options (this, priv);
         if (ret_db) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_EXTRACT_CTR_XLATOR_OPTIONS_FAILED,
@@ -1515,7 +2091,7 @@ init (xlator_t *this)
         }
 
         /*Extract db params options*/
-        ret_db = extract_db_params(this, params_dict, _priv->gfdb_db_type);
+        ret_db = extract_db_params(this, params_dict, priv->gfdb_db_type);
         if (ret_db) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         CTR_MSG_EXTRACT_DB_PARAM_OPTIONS_FAILED,
@@ -1533,8 +2109,8 @@ init (xlator_t *this)
         }
 
         /*Initialize Database Connection*/
-        _priv->_db_conn = init_db(params_dict, _priv->gfdb_db_type);
-        if (!_priv->_db_conn) {
+        priv->_db_conn = init_db(params_dict, priv->gfdb_db_type);
+        if (!priv->_db_conn) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                        CTR_MSG_FATAL_ERROR,
                        "FATAL: Failed initializing data base");
@@ -1550,10 +2126,10 @@ error:
         if (this)
                 mem_pool_destroy (this->local_pool);
 
-        if (_priv) {
-                GF_FREE (_priv->ctr_db_path);
+        if (priv) {
+                GF_FREE (priv->ctr_db_path);
         }
-        GF_FREE (_priv);
+        GF_FREE (priv);
 
         if (params_dict)
                 dict_unref (params_dict);
@@ -1565,7 +2141,7 @@ out:
         if (params_dict)
                 dict_unref (params_dict);
 
-        this->private = (void *)_priv;
+        this->private = (void *)priv;
         return 0;
 }
 
@@ -1612,23 +2188,26 @@ fini (xlator_t *this)
 
 struct xlator_fops fops = {
         /*lookup*/
-        .lookup      = ctr_lookup,
+        .lookup         = ctr_lookup,
         /*write fops */
-        .mknod       = ctr_mknod,
-        .create      = ctr_create,
-        .truncate    = ctr_truncate,
-        .ftruncate   = ctr_ftruncate,
-        .setxattr    = ctr_setxattr,
-        .removexattr = ctr_removexattr,
-        .unlink      = ctr_unlink,
-        .link        = ctr_link,
-        .rename      = ctr_rename,
-        .writev      = ctr_writev,
-        .setattr      = ctr_setattr,
+        .mknod          = ctr_mknod,
+        .create         = ctr_create,
+        .truncate       = ctr_truncate,
+        .ftruncate      = ctr_ftruncate,
+        .setxattr       = ctr_setxattr,
+        .fsetxattr      = ctr_fsetxattr,
+        .removexattr    = ctr_removexattr,
+        .fremovexattr   = ctr_fremovexattr,
+        .unlink         = ctr_unlink,
+        .link           = ctr_link,
+        .rename         = ctr_rename,
+        .writev         = ctr_writev,
+        .setattr        = ctr_setattr,
+        .fsetattr       = ctr_fsetattr,
         /*read fops*/
-        .readv       = ctr_readv,
+        .readv          = ctr_readv,
         /* IPC call*/
-        .ipc          = ctr_ipc
+        .ipc            = ctr_ipc
 };
 
 struct xlator_cbks cbks = {
@@ -1657,16 +2236,21 @@ struct volume_options options[] = {
           .value = {"on", "off"},
           .default_value = "off"
         },
+        { .key  = {"ctr-record-metadata-heat"},
+          .type = GF_OPTION_TYPE_BOOL,
+          .value = {"on", "off"},
+          .default_value = "off"
+        },
         { .key  = {"ctr_link_consistency"},
           .type = GF_OPTION_TYPE_BOOL,
           .value = {"on", "off"},
           .default_value = "off"
         },
-        { .key  = {"ctr_hardlink_heal_expire_period"},
+        { .key  = {"ctr_lookupheal_link_timeout"},
           .type = GF_OPTION_TYPE_INT,
           .default_value = "300"
         },
-        { .key  = {"ctr_inode_heal_expire_period"},
+        { .key  = {"ctr_lookupheal_inode_timeout"},
           .type = GF_OPTION_TYPE_INT,
           .default_value = "300"
         },

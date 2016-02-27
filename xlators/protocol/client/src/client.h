@@ -209,6 +209,7 @@ typedef struct client_args {
         gf_xattrop_flags_t  optype;
         int32_t             valid;
         int32_t             len;
+        gf_seek_what_t      what;
 
         mode_t              umask;
         dict_t             *xdata;
@@ -270,4 +271,6 @@ gf_boolean_t
 __is_fd_reopen_in_progress (clnt_fd_ctx_t *fdctx);
 int
 client_notify_dispatch (xlator_t *this, int32_t event, void *data, ...);
+int
+client_notify_dispatch_uniq (xlator_t *this, int32_t event, void *data, ...);
 #endif /* !_CLIENT_H */

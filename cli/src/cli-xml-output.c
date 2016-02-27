@@ -1668,15 +1668,19 @@ cli_xml_output_vol_status (cli_local_t *local, dict_t *dict)
                         goto out;
 
                 ret = xmlTextWriterStartElement
-                        (local->writer, (xmlChar *)"hotBrick");
+                        (local->writer, (xmlChar *)"hotBricks");
                 XML_RET_CHECK_AND_GOTO (ret, out);
 
         }
         for (i = 0; i <= index_max; i++) {
 
-                if (type == GF_CLUSTER_TYPE_TIER && i >= hot_brick_count) {
+                if (type == GF_CLUSTER_TYPE_TIER && i == hot_brick_count) {
+
+                        /* </hotBricks>*/
+                        ret = xmlTextWriterEndElement (local->writer);
+                        XML_RET_CHECK_AND_GOTO (ret, out);
                         ret = xmlTextWriterStartElement (local->writer,
-                                        (xmlChar *)"coldBrick");
+                                        (xmlChar *)"coldBricks");
                         XML_RET_CHECK_AND_GOTO (ret, out);
                 }
                 ret = cli_xml_output_vol_status_common (local->writer, dict, i,
@@ -1749,16 +1753,13 @@ cli_xml_output_vol_status (cli_local_t *local, dict_t *dict)
                 ret = xmlTextWriterEndElement (local->writer);
                 XML_RET_CHECK_AND_GOTO (ret, out);
 
-                if (type == GF_CLUSTER_TYPE_TIER && i < hot_brick_count) {
-                        ret = xmlTextWriterEndElement (local->writer);
-                        XML_RET_CHECK_AND_GOTO (ret, out);
-                }
-                if (type == GF_CLUSTER_TYPE_TIER && i >= hot_brick_count) {
-                        ret = xmlTextWriterEndElement (local->writer);
-                        XML_RET_CHECK_AND_GOTO (ret, out);
-                }
         }
 
+        /* </coldBricks>*/
+        if (type == GF_CLUSTER_TYPE_TIER && i >= hot_brick_count) {
+                ret = xmlTextWriterEndElement (local->writer);
+                XML_RET_CHECK_AND_GOTO (ret, out);
+        }
 
         /* Tasks are only present when a normal volume status call is done on a
          * single volume or on all volumes
@@ -2550,6 +2551,8 @@ cli_xml_output_vol_info (cli_local_t *local, dict_t *dict)
         int                     dist_count = 0;
         int                     stripe_count = 0;
         int                     replica_count = 0;
+        int                     arbiter_count = 0;
+        int                     isArbiter = 0;
         int                     disperse_count = 0;
         int                     redundancy_count = 0;
         int                     transport = 0;
@@ -2559,6 +2562,29 @@ cli_xml_output_vol_info (cli_local_t *local, dict_t *dict)
         int                     j = 1;
         char                    *caps = NULL;
         int                     k __attribute__((unused)) = 0;
+        int                     index = 1;
+        int                     start_index = 1;
+        int                     vol_type               = -1;
+        int                     tier_vol_type          = 0;
+        /*hot disperse count, redundancy count and dist count are always
+         * zero so need for them to be included in the array.*/
+        int                     hot_disperse_count     = 0;
+        int                     hot_dist_count         = 0;
+        int                     hot_redundancy_count   = 0;
+        values                  c                      = 0;
+        char                    *keys[MAX]              = {
+                [COLD_BRICK_COUNT]      = "volume%d.cold_brick_count",
+                [COLD_TYPE]             = "volume%d.cold_type",
+                [COLD_DIST_COUNT]       = "volume%d.cold_dist_count",
+                [COLD_REPLICA_COUNT]    = "volume%d.cold_replica_count",
+                [COLD_ARBITER_COUNT]    = "volume%d.cold_arbiter_count",
+                [COLD_DISPERSE_COUNT]   = "volume%d.cold_disperse_count",
+                [COLD_REDUNDANCY_COUNT] = "volume%d.cold_redundancy_count",
+                [HOT_BRICK_COUNT]       = "volume%d.hot_brick_count",
+                [HOT_TYPE]              = "volume%d.hot_type",
+                [HOT_REPLICA_COUNT]     = "volume%d.hot_replica_count"};
+        int                     value[MAX]             = {};
+
 
         ret = dict_get_int32 (dict, "count", &count);
         if (ret)
@@ -2643,6 +2669,16 @@ cli_xml_output_vol_info (cli_local_t *local, dict_t *dict)
                 ret = xmlTextWriterWriteFormatElement (local->writer,
                                                        (xmlChar *)"replicaCount",
                                                        "%d", replica_count);
+                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                memset (key, 0, sizeof (key));
+                snprintf (key, sizeof (key), "volume%d.arbiter_count", i);
+                ret = dict_get_int32 (dict, key, &arbiter_count);
+                if (ret)
+                        goto out;
+                ret = xmlTextWriterWriteFormatElement (local->writer,
+                                                      (xmlChar *)"arbiterCount",
+                                                      "%d", arbiter_count);
                 XML_RET_CHECK_AND_GOTO (ret, out);
 
                 memset (key, 0, sizeof (key));
@@ -2758,46 +2794,297 @@ cli_xml_output_vol_info (cli_local_t *local, dict_t *dict)
                 ret = xmlTextWriterStartElement (local->writer,
                                                  (xmlChar *)"bricks");
                 XML_RET_CHECK_AND_GOTO (ret, out);
-                while (j <= brick_count) {
-                        ret = xmlTextWriterStartElement
-                                (local->writer, (xmlChar *)"brick");
-                        XML_RET_CHECK_AND_GOTO (ret, out);
 
-                        memset (key, 0, sizeof (key));
-                        snprintf (key, sizeof (key), "volume%d.brick%d.uuid",
-                                  i, j);
-                        ret = dict_get_str (dict, key, &uuid);
-                        if (ret)
-                                goto out;
-                        ret = xmlTextWriterWriteFormatAttribute
-                                (local->writer, (xmlChar *)"uuid", "%s",
-                                 uuid);
-                        XML_RET_CHECK_AND_GOTO (ret, out);
+                if (type == GF_CLUSTER_TYPE_TIER) {
+                        /*the values for hot stripe, disperse and redundancy
+                         * should not be looped in here as they are zero
+                         * always */
+                        for (c = COLD_BRICK_COUNT; c < MAX; c++) {
 
-                        memset (key, 0, sizeof (key));
-                        snprintf (key, sizeof (key), "volume%d.brick%d", i, j);
-                        ret = dict_get_str (dict, key, &brick);
-                        if (ret)
-                                goto out;
-                        ret = xmlTextWriterWriteFormatString
-                                (local->writer, "%s", brick);
+                                memset (key, 0, sizeof (key));
+                                snprintf (key, 256, keys[c], i);
+                                ret = dict_get_int32 (dict, key, &value[c]);
+                                if (ret)
+                                        goto out;
+                        }
+
+                        tier_vol_type = value[HOT_TYPE];
+                        hot_dist_count = (value[HOT_REPLICA_COUNT] ?
+                                          value[HOT_REPLICA_COUNT] : 1);
+                        if ((value[HOT_TYPE] != GF_CLUSTER_TYPE_TIER) &&
+                            (value[HOT_TYPE] > 0) &&
+                            (hot_dist_count < value[HOT_BRICK_COUNT]))
+                                tier_vol_type = value[HOT_TYPE] +
+                                        GF_CLUSTER_TYPE_MAX - 1;
+
+                        ret = xmlTextWriterStartElement (local->writer,
+                                                         (xmlChar *)
+                                                         "hotBricks");
                         XML_RET_CHECK_AND_GOTO (ret, out);
 
                         ret = xmlTextWriterWriteFormatElement
-                                (local->writer, (xmlChar *)"name", "%s",
-                                 brick);
+                                (local->writer, (xmlChar *)"hotBrickType",
+                                 "%s", cli_vol_type_str[tier_vol_type]);
+
+                        ret = xmlTextWriterWriteFormatElement (local->writer,
+                                                   (xmlChar *)"hotreplicaCount",
+                                                    "%d",
+                                                    value[HOT_REPLICA_COUNT]);
                         XML_RET_CHECK_AND_GOTO (ret, out);
 
-                        ret = xmlTextWriterWriteFormatElement
-                                (local->writer, (xmlChar *)"hostUuid", "%s",
-                                 uuid);
+                        ret = xmlTextWriterWriteFormatElement (local->writer,
+                                                   (xmlChar *)"hotbrickCount",
+                                                    "%d",
+                                                    value[HOT_BRICK_COUNT]);
                         XML_RET_CHECK_AND_GOTO (ret, out);
 
-                        /* </brick> */
+                        if (value[HOT_TYPE] == GF_CLUSTER_TYPE_NONE ||
+                                        value[HOT_TYPE] ==
+                                        GF_CLUSTER_TYPE_TIER) {
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer,
+                                         (xmlChar *)"numberOfBricks",
+                                         "%d", value[HOT_BRICK_COUNT]);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+                        } else {
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer,
+                                         (xmlChar *)"numberOfBricks",
+                                         "%d x %d = %d",
+                                         (value[HOT_BRICK_COUNT] /
+                                          hot_dist_count),
+                                         hot_dist_count,
+                                         value[HOT_BRICK_COUNT]);
+                        }
+
+                        while (index <= value[HOT_BRICK_COUNT]) {
+                                snprintf (key, 1024, "volume%d.brick%d", i,
+                                          index);
+                                ret = dict_get_str (dict, key, &brick);
+                                if (ret)
+                                        goto out;
+
+                                ret = xmlTextWriterStartElement
+                                        (local->writer, (xmlChar *)"brick");
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                memset (key, 0, sizeof (key));
+                                snprintf (key, sizeof (key),
+                                          "volume%d.brick%d.uuid", i, j);
+                                ret = dict_get_str (dict, key, &uuid);
+                                if (ret)
+                                        goto out;
+                                ret = xmlTextWriterWriteFormatAttribute
+                                        (local->writer, (xmlChar *)"uuid", "%s",
+                                         uuid);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                ret = xmlTextWriterWriteFormatString
+                                        (local->writer, "%s", brick);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer, (xmlChar *)"name", "%s",
+                                         brick);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer, (xmlChar *)"hostUuid",
+                                         "%s", uuid);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                ret = xmlTextWriterEndElement (local->writer);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                index++;
+                        }
                         ret = xmlTextWriterEndElement (local->writer);
                         XML_RET_CHECK_AND_GOTO (ret, out);
 
-                        j++;
+                        tier_vol_type = value[COLD_TYPE];
+                        if ((value[COLD_TYPE] != GF_CLUSTER_TYPE_TIER) &&
+                            (value[COLD_TYPE] > 0) &&
+                            (value[COLD_DIST_COUNT] < value[COLD_BRICK_COUNT]))
+                                tier_vol_type = value[COLD_TYPE] +
+                                        GF_CLUSTER_TYPE_MAX - 1;
+
+
+                        ret = xmlTextWriterStartElement (local->writer,
+                                                         (xmlChar *)
+                                                         "coldBricks");
+                        XML_RET_CHECK_AND_GOTO (ret, out);
+
+                        ret = xmlTextWriterWriteFormatElement
+                                (local->writer, (xmlChar *)"coldBrickType",
+                                 "%s", cli_vol_type_str[tier_vol_type]);
+
+                        ret = xmlTextWriterWriteFormatElement (local->writer,
+                                        (xmlChar *)"coldreplicaCount",
+                                        "%d", value[COLD_REPLICA_COUNT]);
+                        XML_RET_CHECK_AND_GOTO (ret, out);
+
+                        ret = xmlTextWriterWriteFormatElement (local->writer,
+                                        (xmlChar *)"coldarbiterCount",
+                                        "%d", value[COLD_ARBITER_COUNT]);
+                        XML_RET_CHECK_AND_GOTO (ret, out);
+
+                        ret = xmlTextWriterWriteFormatElement (local->writer,
+                                                   (xmlChar *)"coldbrickCount",
+                                                    "%d",
+                                                    value[COLD_BRICK_COUNT]);
+                        XML_RET_CHECK_AND_GOTO (ret, out);
+
+                        ret = xmlTextWriterWriteFormatElement (local->writer,
+                                              (xmlChar *)"colddisperseCount",
+                                              "%d", value[COLD_DISPERSE_COUNT]);
+                        XML_RET_CHECK_AND_GOTO (ret, out);
+
+                        if (value[COLD_TYPE] == GF_CLUSTER_TYPE_NONE ||
+                                        value[COLD_TYPE] ==
+                                        GF_CLUSTER_TYPE_TIER) {
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer,
+                                         (xmlChar *)"numberOfBricks",
+                                         "%d", value[COLD_BRICK_COUNT]);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                        } else if (value[COLD_TYPE] ==
+                                        GF_CLUSTER_TYPE_DISPERSE) {
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer,
+                                         (xmlChar *)"numberOfBricks",
+                                         " %d x (%d + %d) = %d",
+                                         (value[COLD_BRICK_COUNT] /
+                                          value[COLD_DIST_COUNT]),
+                                         value[COLD_DISPERSE_COUNT] -
+                                         value[COLD_REDUNDANCY_COUNT],
+                                         value[COLD_REDUNDANCY_COUNT],
+                                         value[COLD_BRICK_COUNT]);
+                        } else {
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer,
+                                         (xmlChar *)"numberOfBricks",
+                                         "%d x %d = %d",
+                                         (value[COLD_BRICK_COUNT] /
+                                          value[COLD_DIST_COUNT]),
+                                         value[COLD_DIST_COUNT],
+                                         value[COLD_BRICK_COUNT]);
+                        }
+
+                        start_index = index = value[HOT_BRICK_COUNT] + 1;
+
+                        while (index <= brick_count) {
+                                snprintf (key, 1024, "volume%d.brick%d", i,
+                                          index);
+                                ret = dict_get_str (dict, key, &brick);
+                                if (ret)
+                                        goto out;
+
+                                ret = xmlTextWriterStartElement
+                                        (local->writer, (xmlChar *)"brick");
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                memset (key, 0, sizeof (key));
+                                snprintf (key, sizeof (key),
+                                          "volume%d.brick%d.uuid", i, j);
+                                ret = dict_get_str (dict, key, &uuid);
+                                if (ret)
+                                        goto out;
+                                ret = xmlTextWriterWriteFormatAttribute
+                                        (local->writer, (xmlChar *)"uuid", "%s",
+                                         uuid);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                ret = xmlTextWriterWriteFormatString
+                                        (local->writer, "%s", brick);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer, (xmlChar *)"name", "%s",
+                                         brick);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer, (xmlChar *)"hostUuid",
+                                         "%s", uuid);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                memset (key, 0, sizeof (key));
+                                snprintf (key, sizeof (key),
+                                          "volume%d.brick%d.isArbiter", i,
+                                          index);
+                                if (dict_get (dict, key))
+                                        isArbiter = 1;
+                                else
+                                        isArbiter = 0;
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer, (xmlChar *)"isArbiter",
+                                         "%d", isArbiter);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                ret = xmlTextWriterEndElement (local->writer);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                index++;
+                        }
+                        ret = xmlTextWriterEndElement (local->writer);
+                        XML_RET_CHECK_AND_GOTO (ret, out);
+
+                } else {
+                        while (j <= brick_count) {
+                                ret = xmlTextWriterStartElement
+                                        (local->writer, (xmlChar *)"brick");
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                memset (key, 0, sizeof (key));
+                                snprintf (key, sizeof (key),
+                                          "volume%d.brick%d.uuid", i, j);
+                                ret = dict_get_str (dict, key, &uuid);
+                                if (ret)
+                                        goto out;
+                                ret = xmlTextWriterWriteFormatAttribute
+                                        (local->writer, (xmlChar *)"uuid", "%s",
+                                         uuid);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                memset (key, 0, sizeof (key));
+                                snprintf (key, sizeof (key),
+                                          "volume%d.brick%d", i, j);
+                                ret = dict_get_str (dict, key, &brick);
+                                if (ret)
+                                        goto out;
+                                ret = xmlTextWriterWriteFormatString
+                                        (local->writer, "%s", brick);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer, (xmlChar *)"name", "%s",
+                                         brick);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer, (xmlChar *)"hostUuid",
+                                         "%s", uuid);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                memset (key, 0, sizeof (key));
+                                snprintf (key, sizeof (key),
+                                          "volume%d.brick%d.isArbiter", i, j);
+                                if (dict_get (dict, key))
+                                        isArbiter = 1;
+                                else
+                                        isArbiter = 0;
+                                ret = xmlTextWriterWriteFormatElement
+                                        (local->writer, (xmlChar *)"isArbiter",
+                                         "%d", isArbiter);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                /* </brick> */
+                                ret = xmlTextWriterEndElement (local->writer);
+                                XML_RET_CHECK_AND_GOTO (ret, out);
+
+                                j++;
+                        }
                 }
                 /* </bricks> */
                 ret = xmlTextWriterEndElement (local->writer);
@@ -5959,9 +6246,10 @@ out:
 }
 
 int
-cli_quota_xml_output (cli_local_t *local, char *path, char *hl_str,
-                      char *sl_final, void *used, void *avail, char *sl,
-                      char *hl)
+cli_quota_xml_output (cli_local_t *local, char *path, int64_t hl_str,
+                      char *sl_final, int64_t sl_num, int64_t used,
+                      int64_t avail, char *sl, char *hl,
+                      gf_boolean_t limit_set)
 {
 #if (HAVE_LIB_XML)
         int     ret             = -1;
@@ -5970,49 +6258,48 @@ cli_quota_xml_output (cli_local_t *local, char *path, char *hl_str,
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
-                                              (xmlChar *)"path",
-                                              "%s", path);
+                                               (xmlChar *)"path",
+                                               "%s", path);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
-                                              (xmlChar *)"hard_limit",
-                                               "%s", hl_str);
+                                               (xmlChar *)"hard_limit",
+                                               !limit_set ? "N/A" :
+                                               "%"PRId64, hl_str);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
-                                              (xmlChar *)"soft_limit",
+                                               (xmlChar *)"soft_limit_percent",
+                                               !limit_set ? "N/A" :
                                                "%s", sl_final);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
-        if ((char *)used) {
-                ret = xmlTextWriterWriteFormatElement
-                        (local->writer, (xmlChar *)"used_space", "%s",
-                        (char *)used);
-        } else {
-                ret = xmlTextWriterWriteFormatElement
-                        (local->writer, (xmlChar *)"user_space", "%11"PRIu64,
-                        *(long unsigned int *)used);
-        }
+        ret = xmlTextWriterWriteFormatElement (local->writer,
+                                               (xmlChar *)"soft_limit_value",
+                                               !limit_set ? "N/A" :
+                                               "%"PRId64, sl_num);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
-        if ((char *)avail) {
-                ret = xmlTextWriterWriteFormatElement
-                        (local->writer, (xmlChar *)"avail_space", "%s",
-                        (char *)avail);
-        } else {
-                ret = xmlTextWriterWriteFormatElement
-                        (local->writer, (xmlChar *)"avail_space", "%11"PRIu64,
-                        *(long unsigned int *)avail);
-        }
+        ret = xmlTextWriterWriteFormatElement (local->writer,
+                                               (xmlChar *)"used_space",
+                                               "%"PRId64, used);
+        XML_RET_CHECK_AND_GOTO (ret, out);
+
+        ret = xmlTextWriterWriteFormatElement (local->writer,
+                                               (xmlChar *)"avail_space",
+                                               !limit_set ? "N/A" :
+                                               "%"PRId64, avail);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
                                               (xmlChar *)"sl_exceeded",
+                                               !limit_set ? "N/A" :
                                                "%s", sl);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
                                                (xmlChar *)"hl_exceeded",
+                                               !limit_set ? "N/A" :
                                                "%s", hl);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
@@ -6029,8 +6316,9 @@ out:
 
 int
 cli_quota_object_xml_output (cli_local_t *local, char *path, char *sl_str,
-                             quota_limits_t *limits, quota_meta_t *used_space,
-                             int64_t avail, char *sl, char *hl)
+                             int64_t sl_val, quota_limits_t *limits,
+                             quota_meta_t *used_space, int64_t avail,
+                             char *sl, char *hl, gf_boolean_t limit_set)
 {
 #if (HAVE_LIB_XML)
         int     ret             = -1;
@@ -6039,47 +6327,59 @@ cli_quota_object_xml_output (cli_local_t *local, char *path, char *sl_str,
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
-                                              (xmlChar *)"path",
+                                               (xmlChar *)"path",
                                               "%s", path);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
-                                              (xmlChar *)"hard_limit",
-                                               "%"PRIu64, limits->hl);
+                                               (xmlChar *)"hard_limit",
+                                               !limit_set ? "N/A" :
+                                               "%"PRId64, limits->hl);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
-                                              (xmlChar *)"soft_limit",
+                                               (xmlChar *)"soft_limit_percent",
+                                               !limit_set ? "N/A" :
                                                "%s", sl_str);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
-                                              (xmlChar *)"file_count",
-                                               "%"PRIu64,
+                                               (xmlChar *)"soft_limit_value",
+                                               !limit_set ? "N/A" :
+                                               "%"PRIu64, sl_val);
+        XML_RET_CHECK_AND_GOTO (ret, out);
+
+        ret = xmlTextWriterWriteFormatElement (local->writer,
+                                               (xmlChar *)"file_count",
+                                               "%"PRId64,
                                                used_space->file_count);
 
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
-                                              (xmlChar *)"dir_count", "%"PRIu64,
+                                               (xmlChar *)"dir_count",
+                                               "%"PRIu64,
                                                used_space->dir_count);
 
         XML_RET_CHECK_AND_GOTO (ret, out);
 
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
-                                              (xmlChar *)"available", "%"PRIu64,
-                                               avail);
+                                               (xmlChar *)"available",
+                                               !limit_set ? "N/A" :
+                                               "%"PRId64, avail);
 
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
-                                              (xmlChar *)"sl_exceeded",
+                                               (xmlChar *)"sl_exceeded",
+                                               !limit_set ? "N/A" :
                                                "%s", sl);
         XML_RET_CHECK_AND_GOTO (ret, out);
 
         ret = xmlTextWriterWriteFormatElement (local->writer,
                                                (xmlChar *)"hl_exceeded",
+                                               !limit_set ? "N/A" :
                                                "%s", hl);
         XML_RET_CHECK_AND_GOTO (ret, out);
 

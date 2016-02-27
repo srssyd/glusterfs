@@ -152,6 +152,7 @@ dht_priv_dump (xlator_t *this)
         gf_proc_dump_write("disk_unit", "%c", conf->disk_unit);
         gf_proc_dump_write("refresh_interval", "%d", conf->refresh_interval);
         gf_proc_dump_write("unhashed_sticky_bit", "%d", conf->unhashed_sticky_bit);
+        gf_proc_dump_write("use-readdirp", "%d", conf->use_readdirp);
 
         if (conf->du_stats && conf->subvolume_status) {
                 for (i = 0; i < conf->subvolume_cnt; i++) {
@@ -486,6 +487,8 @@ dht_reconfigure (xlator_t *this, dict_t *options)
         GF_OPTION_RECONF ("weighted-rebalance", conf->do_weighting, options,
                           bool, out);
 
+        GF_OPTION_RECONF ("use-readdirp", conf->use_readdirp, options,
+                          bool, out);
         ret = 0;
 out:
         return ret;
@@ -560,6 +563,32 @@ out:
 
         return ret;
 }
+
+
+
+int
+dht_init_methods (xlator_t *this)
+{
+        int ret                  = -1;
+        dht_conf_t      *conf    = NULL;
+        dht_methods_t   *methods = NULL;
+
+        GF_VALIDATE_OR_GOTO ("dht", this, err);
+
+        conf = this->private;
+        methods = &(conf->methods);
+
+        methods->migration_get_dst_subvol = dht_migration_get_dst_subvol;
+        methods->migration_needed = dht_migration_needed;
+        methods->migration_other  = NULL;
+        methods->layout_search    = dht_layout_search;
+
+        ret = 0;
+err:
+        return ret;
+}
+
+
 
 int
 dht_init (xlator_t *this)
@@ -800,7 +829,8 @@ dht_init (xlator_t *this)
         if (dht_set_subvol_range(this))
                 goto err;
 
-        conf->methods = &dht_methods;
+        if (dht_init_methods (this))
+                goto err;
 
         return 0;
 
@@ -960,6 +990,11 @@ struct volume_options options[] = {
         },
 
         /* tier options */
+        { .key  = {"tier-pause"},
+          .type = GF_OPTION_TYPE_BOOL,
+          .default_value = "off",
+        },
+
         { .key  = {"tier-promote-frequency"},
           .type = GF_OPTION_TYPE_INT,
           .default_value = "120",
@@ -968,24 +1003,39 @@ struct volume_options options[] = {
 
         { .key  = {"tier-demote-frequency"},
           .type = GF_OPTION_TYPE_INT,
-          .default_value = "120",
+          .default_value = "3600",
           .description = "Frequency to demote files to slow tier"
         },
 
         { .key  = {"write-freq-threshold"},
           .type = GF_OPTION_TYPE_INT,
           .default_value = "0",
-          .description = "Defines the write fequency "
-                        "that would be considered hot"
         },
 
         { .key  = {"read-freq-threshold"},
           .type = GF_OPTION_TYPE_INT,
           .default_value = "0",
-          .description = "Defines the read fequency "
-                        "that would be considered hot"
         },
-
+        { .key         = {"watermark-hi"},
+          .type = GF_OPTION_TYPE_PERCENT,
+          .default_value = "90",
+        },
+        { .key         = {"watermark-low"},
+          .type = GF_OPTION_TYPE_PERCENT,
+          .default_value = "75",
+        },
+        { .key         = {"tier-mode"},
+          .type = GF_OPTION_TYPE_STR,
+          .default_value = "test",
+        },
+        { .key         = {"tier-max-mb"},
+          .type = GF_OPTION_TYPE_INT,
+          .default_value = "4000",
+        },
+        { .key         = {"tier-max-files"},
+          .type = GF_OPTION_TYPE_INT,
+          .default_value = "10000",
+        },
         /* switch option */
         { .key  = {"pattern.switch.case"},
           .type = GF_OPTION_TYPE_ANY

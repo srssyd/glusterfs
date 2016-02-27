@@ -458,6 +458,8 @@ rpc_transport_destroy (rpc_transport_t *this)
 
 	GF_VALIDATE_OR_GOTO("rpc_transport", this, fail);
 
+        if (this->clnt_options)
+                dict_unref (this->clnt_options);
         if (this->options)
                 dict_unref (this->options);
 	if (this->fini)
@@ -683,12 +685,6 @@ rpc_transport_inet_options_build (dict_t **options, const char *hostname,
         if (ret) {
                 gf_log (THIS->name, GF_LOG_WARNING,
                         "failed to set remote-port with %d", port);
-                goto out;
-        }
-        ret = dict_set_str (dict, "transport.address-family", "inet");
-        if (ret) {
-                gf_log (THIS->name, GF_LOG_WARNING,
-                        "failed to set addr-family with inet");
                 goto out;
         }
 

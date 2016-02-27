@@ -37,7 +37,9 @@ ec_ext_sources = $(top_builddir)/xlators/lib/src/libxlator.c
 
 ec_ext_headers = $(top_builddir)/xlators/lib/src/libxlator.h
 
-ec_la_LDFLAGS = -module -avoid-version -lpthread
+
+ec_la_LDFLAGS = -module $(GF_XLATOR_DEFAULT_LDFLAGS) -lpthread
+
 ec_la_SOURCES = $(ec_sources) $(ec_headers) $(ec_ext_sources) $(ec_ext_headers)
 ec_la_LIBADD = $(top_builddir)/libglusterfs/src/libglusterfs.la
 

@@ -30,8 +30,8 @@ typedef struct _ec_dict_combine ec_dict_combine_t;
 
 struct _ec_dict_info
 {
-		dict_t * dict;
-		int32_t  count;
+    dict_t * dict;
+    int32_t  count;
 };
 
 struct _ec_dict_combine
@@ -498,472 +498,479 @@ out:
 		GF_FREE(pre);
 
 		return err;
-}
+};
+
+
+
 
 int32_t ec_dict_data_merge(ec_cbk_data_t *cbk, int32_t which, char *key)
 {
-		data_t *data[cbk->count];
-		dict_t *dict, *lockinfo, *tmp = NULL;
-		char *ptr = NULL;
-		int32_t i, num, len;
-		int32_t err;
 
-		num = cbk->count;
-		err = ec_dict_list(data, &num, cbk, which, key);
-		if (err != 0) {
-				return err;
-		}
+    data_t *data[cbk->count];
+    dict_t *dict, *lockinfo, *tmp = NULL;
+    char *ptr = NULL;
+    int32_t i, num, len;
+    int32_t err;
 
-		lockinfo = dict_new();
-		if (lockinfo == NULL) {
-				return -ENOMEM;
-		}
+    num = cbk->count;
+    err = ec_dict_list(data, &num, cbk, which, key);
+    if (err != 0) {
+        return err;
+    }
 
-		err = dict_unserialize(data[0]->data, data[0]->len, &lockinfo);
-		if (err != 0) {
-				goto out;
-		}
+    lockinfo = dict_new();
+    if (lockinfo == NULL) {
+        return -ENOMEM;
+    }
 
-		for (i = 1; i < num; i++)
-		{
-				tmp = dict_new();
-				if (tmp == NULL) {
-						err = -ENOMEM;
+    err = dict_unserialize(data[0]->data, data[0]->len, &lockinfo);
+    if (err != 0) {
+        goto out;
+    }
 
-						goto out;
-				}
-				err = dict_unserialize(data[i]->data, data[i]->len, &tmp);
-				if (err != 0) {
-						goto out;
-				}
-				if (dict_copy(tmp, lockinfo) == NULL) {
-						err = -ENOMEM;
+    for (i = 1; i < num; i++)
+    {
+        tmp = dict_new();
+        if (tmp == NULL) {
+            err = -ENOMEM;
 
-						goto out;
-				}
+            goto out;
+        }
+        err = dict_unserialize(data[i]->data, data[i]->len, &tmp);
+        if (err != 0) {
+            goto out;
+        }
+        if (dict_copy(tmp, lockinfo) == NULL) {
+            err = -ENOMEM;
 
-				dict_unref(tmp);
-		}
+            goto out;
+        }
 
-		tmp = NULL;
+        dict_unref(tmp);
+    }
 
-		len = dict_serialized_length(lockinfo);
-		if (len < 0) {
-				err = len;
+    tmp = NULL;
 
-				goto out;
-		}
-		ptr = GF_MALLOC(len, gf_common_mt_char);
-		if (ptr == NULL) {
-				err = -ENOMEM;
+    len = dict_serialized_length(lockinfo);
+    if (len < 0) {
+        err = len;
 
-				goto out;
-		}
-		err = dict_serialize(lockinfo, ptr);
-		if (err != 0) {
-				goto out;
-		}
-		dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
-		err = dict_set_dynptr(dict, key, ptr, len);
-		if (err != 0) {
-				goto out;
-		}
+        goto out;
+    }
+    ptr = GF_MALLOC(len, gf_common_mt_char);
+    if (ptr == NULL) {
+        err = -ENOMEM;
 
-		ptr = NULL;
+        goto out;
+    }
+    err = dict_serialize(lockinfo, ptr);
+    if (err != 0) {
+        goto out;
+    }
+    dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
+    err = dict_set_dynptr(dict, key, ptr, len);
+    if (err != 0) {
+        goto out;
+    }
+
+    ptr = NULL;
 
 out:
-		GF_FREE(ptr);
-		dict_unref(lockinfo);
-		if (tmp != NULL) {
-				dict_unref(tmp);
-		}
+    GF_FREE(ptr);
+    dict_unref(lockinfo);
+    if (tmp != NULL) {
+        dict_unref(tmp);
+    }
 
-		return err;
+    return err;
+
 }
 
 int32_t ec_dict_data_uuid(ec_cbk_data_t * cbk, int32_t which, char * key)
 {
-		ec_cbk_data_t * ans, * min;
-		dict_t * src, * dst;
-		data_t * data;
+    ec_cbk_data_t * ans, * min;
+    dict_t * src, * dst;
+    data_t * data;
 
-		min = cbk;
-		for (ans = cbk->next; ans != NULL; ans = ans->next) {
-				if (ans->idx < min->idx) {
-						min = ans;
-				}
-		}
+    min = cbk;
+    for (ans = cbk->next; ans != NULL; ans = ans->next) {
+        if (ans->idx < min->idx) {
+            min = ans;
+        }
+    }
 
-		if (min != cbk) {
-				src = (which == EC_COMBINE_XDATA) ? min->xdata : min->dict;
-				dst = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
+    if (min != cbk) {
+        src = (which == EC_COMBINE_XDATA) ? min->xdata : min->dict;
+        dst = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
 
-				data = dict_get(src, key);
-				if (data == NULL) {
-						return -ENOENT;
-				}
-				if (dict_set(dst, key, data) != 0) {
-						return -ENOMEM;
-				}
-		}
+        data = dict_get(src, key);
+        if (data == NULL) {
+            return -ENOENT;
+        }
+        if (dict_set(dst, key, data) != 0) {
+            return -ENOMEM;
+        }
+    }
 
-		return 0;
+    return 0;
+
 }
 
 int32_t ec_dict_data_max32(ec_cbk_data_t *cbk, int32_t which, char *key)
 {
-		data_t * data[cbk->count];
-		dict_t * dict;
-		int32_t i, num, err;
-		uint32_t max, tmp;
 
-		num = cbk->count;
-		err = ec_dict_list(data, &num, cbk, which, key);
-		if (err != 0) {
-				return err;
-		}
+    data_t * data[cbk->count];
+    dict_t * dict;
+    int32_t i, num, err;
+    uint32_t max, tmp;
 
-		max = data_to_uint32(data[0]);
-		for (i = 1; i < num; i++) {
-				tmp = data_to_uint32(data[i]);
-				if (max < tmp) {
-						max = tmp;
-				}
-		}
+    num = cbk->count;
+    err = ec_dict_list(data, &num, cbk, which, key);
+    if (err != 0) {
+        return err;
+    }
 
-		dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
-		return dict_set_uint32(dict, key, max);
+    max = data_to_uint32(data[0]);
+    for (i = 1; i < num; i++) {
+        tmp = data_to_uint32(data[i]);
+        if (max < tmp) {
+            max = tmp;
+        }
+    }
+
+    dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
+    return dict_set_uint32(dict, key, max);
 }
 
 int32_t ec_dict_data_max64(ec_cbk_data_t *cbk, int32_t which, char *key)
 {
-		data_t *data[cbk->count];
-		dict_t *dict;
-		int32_t i, num, err;
-		uint64_t max, tmp;
 
-		num = cbk->count;
-		err = ec_dict_list(data, &num, cbk, which, key);
-		if (err != 0) {
-				return err;
-		}
+    data_t *data[cbk->count];
+    dict_t *dict;
+    int32_t i, num, err;
+    uint64_t max, tmp;
 
-		max = data_to_uint64(data[0]);
-		for (i = 1; i < num; i++) {
-				tmp = data_to_uint64(data[i]);
-				if (max < tmp) {
-						max = tmp;
-				}
-		}
+    num = cbk->count;
+    err = ec_dict_list(data, &num, cbk, which, key);
+    if (err != 0) {
+        return err;
+    }
 
-		dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
-		return dict_set_uint64(dict, key, max);
+    max = data_to_uint64(data[0]);
+    for (i = 1; i < num; i++) {
+        tmp = data_to_uint64(data[i]);
+        if (max < tmp) {
+            max = tmp;
+        }
+    }
+
+    dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
+    return dict_set_uint64(dict, key, max);
+
 }
 
 int32_t ec_dict_data_quota(ec_cbk_data_t *cbk, int32_t which, char *key)
 {
-		data_t      *data[cbk->count];
-		dict_t      *dict             = NULL;
-		ec_t        *ec               = NULL;
-		int32_t      i                = 0;
-		int32_t      num              = 0;
-		int32_t      err              = 0;
-		quota_meta_t size             = {0, };
-		quota_meta_t max_size         = {0, };
 
-		num = cbk->count;
-		err = ec_dict_list(data, &num, cbk, which, key);
-		if (err != 0) {
-				return err;
-		}
+    data_t      *data[cbk->count];
+    dict_t      *dict             = NULL;
+    ec_t        *ec               = NULL;
+    int32_t      i                = 0;
+    int32_t      num              = 0;
+    int32_t      err              = 0;
+    quota_meta_t size             = {0, };
+    quota_meta_t max_size         = {0, };
 
-		if (num == 0) {
-				return 0;
-		}
+    num = cbk->count;
+    err = ec_dict_list(data, &num, cbk, which, key);
+    if (err != 0) {
+        return err;
+    }
 
-		/* Quota size xattr is managed outside of the control of the ec xlator.
-		 * This means that it might not be updated at the same time on all
-		 * bricks and we can receive slightly different values. If that's the
-		 * case, we take the maximum of all received values.
-		 */
-		for (i = 0; i < num; i++) {
-				if (quota_data_to_meta (data[i], QUOTA_SIZE_KEY, &size) < 0) {
-						continue;
-				}
+    if (num == 0) {
+        return 0;
+    }
 
-				if (size.size > max_size.size)
-						max_size.size = size.size;
-				if (size.file_count > max_size.file_count)
-						max_size.file_count = size.file_count;
-				if (size.dir_count > max_size.dir_count)
-						max_size.dir_count = size.dir_count;
-		}
+    /* Quota size xattr is managed outside of the control of the ec xlator.
+     * This means that it might not be updated at the same time on all
+     * bricks and we can receive slightly different values. If that's the
+     * case, we take the maximum of all received values.
+     */
+    for (i = 0; i < num; i++) {
+        if (quota_data_to_meta (data[i], QUOTA_SIZE_KEY, &size) < 0) {
+                continue;
+        }
 
-		ec = cbk->fop->xl->private;
-		max_size.size *= ec->fragments;
+        if (size.size > max_size.size)
+                max_size.size = size.size;
+        if (size.file_count > max_size.file_count)
+                max_size.file_count = size.file_count;
+        if (size.dir_count > max_size.dir_count)
+                max_size.dir_count = size.dir_count;
+    }
 
-		dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
-		return quota_dict_set_meta (dict, key, &max_size, IA_IFDIR);
+    ec = cbk->fop->xl->private;
+    max_size.size *= ec->fragments;
+
+    dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
+    return quota_dict_set_meta (dict, key, &max_size, IA_IFDIR);
 }
 
 int32_t ec_dict_data_stime(ec_cbk_data_t * cbk, int32_t which, char * key)
 {
-		data_t * data[cbk->count];
-		dict_t * dict;
-		int32_t i, num, err;
 
-		num = cbk->count;
-		err = ec_dict_list(data, &num, cbk, which, key);
-		if (err != 0) {
-				return err;
-		}
+    data_t * data[cbk->count];
+    dict_t * dict;
+    int32_t i, num, err;
 
-		dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
-		for (i = 1; i < num; i++) {
-				err = gf_get_max_stime(cbk->fop->xl, dict, key, data[i]);
-				if (err != 0) {
-						gf_msg (cbk->fop->xl->name, GF_LOG_ERROR, -err,
-										EC_MSG_STIME_COMBINE_FAIL, "STIME combination failed");
+    num = cbk->count;
+    err = ec_dict_list(data, &num, cbk, which, key);
+    if (err != 0) {
+        return err;
+    }
 
-						return err;
-				}
-		}
+    dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
+    for (i = 1; i < num; i++) {
+        err = gf_get_max_stime(cbk->fop->xl, dict, key, data[i]);
+        if (err != 0) {
+            gf_msg (cbk->fop->xl->name, GF_LOG_ERROR, -err,
+                    EC_MSG_STIME_COMBINE_FAIL, "STIME combination failed");
 
-		return 0;
+            return err;
+        }
+    }
+
+    return 0;
 }
 
 int32_t ec_dict_data_combine(dict_t * dict, char * key, data_t * value,
-				void * arg)
+                             void * arg)
 {
-		ec_dict_combine_t * data = arg;
+    ec_dict_combine_t * data = arg;
 
-		if ((strcmp(key, GF_XATTR_PATHINFO_KEY) == 0) ||
-						(strcmp(key, GF_XATTR_USER_PATHINFO_KEY) == 0))
-		{
-				return ec_dict_data_concat("(<EC:%s> { })", data->cbk, data->which,
-								key, data->cbk->fop->xl->name);
-		}
+    if ((strcmp(key, GF_XATTR_PATHINFO_KEY) == 0) ||
+        (strcmp(key, GF_XATTR_USER_PATHINFO_KEY) == 0))
+    {
+        return ec_dict_data_concat("(<EC:%s> { })", data->cbk, data->which,
+                                   key, data->cbk->fop->xl->name);
+    }
 
-		if (strncmp(key, GF_XATTR_CLRLK_CMD, strlen(GF_XATTR_CLRLK_CMD)) == 0)
-		{
-				return ec_dict_data_concat("{\n}", data->cbk, data->which, key);
-		}
+    if (strncmp(key, GF_XATTR_CLRLK_CMD, strlen(GF_XATTR_CLRLK_CMD)) == 0)
+    {
+        return ec_dict_data_concat("{\n}", data->cbk, data->which, key);
+    }
 
-		if (strncmp(key, GF_XATTR_LOCKINFO_KEY,
-								strlen(GF_XATTR_LOCKINFO_KEY)) == 0)
-		{
-				return ec_dict_data_merge(data->cbk, data->which, key);
-		}
+    if (strncmp(key, GF_XATTR_LOCKINFO_KEY,
+                strlen(GF_XATTR_LOCKINFO_KEY)) == 0)
+    {
+        return ec_dict_data_merge(data->cbk, data->which, key);
+    }
 
-		if (strcmp(key, GLUSTERFS_OPEN_FD_COUNT) == 0)
-		{
-				return ec_dict_data_max32(data->cbk, data->which, key);
-		}
-		if ((strcmp(key, GLUSTERFS_INODELK_COUNT) == 0) ||
-						(strcmp(key, GLUSTERFS_ENTRYLK_COUNT) == 0)) {
-				return ec_dict_data_max32(data->cbk, data->which, key);
-		}
+    if (strcmp(key, GLUSTERFS_OPEN_FD_COUNT) == 0)
+    {
+        return ec_dict_data_max32(data->cbk, data->which, key);
+    }
+    if ((strcmp(key, GLUSTERFS_INODELK_COUNT) == 0) ||
+        (strcmp(key, GLUSTERFS_ENTRYLK_COUNT) == 0)) {
+        return ec_dict_data_max32(data->cbk, data->which, key);
+    }
 
-		if (strcmp(key, QUOTA_SIZE_KEY) == 0) {
-				return ec_dict_data_quota(data->cbk, data->which, key);
-		}
-		/* Ignore all other quota attributes */
-		if (strncmp(key, EC_QUOTA_PREFIX, strlen(EC_QUOTA_PREFIX)) == 0) {
-				return 0;
-		}
+    if (strcmp(key, QUOTA_SIZE_KEY) == 0) {
+        return ec_dict_data_quota(data->cbk, data->which, key);
+    }
+    /* Ignore all other quota attributes */
+    if (strncmp(key, EC_QUOTA_PREFIX, strlen(EC_QUOTA_PREFIX)) == 0) {
+        return 0;
+    }
 
-		if (XATTR_IS_NODE_UUID(key))
-		{
-				return ec_dict_data_uuid(data->cbk, data->which, key);
-		}
+    if (XATTR_IS_NODE_UUID(key))
+    {
+        return ec_dict_data_uuid(data->cbk, data->which, key);
+    }
 
-		if (fnmatch(GF_XATTR_STIME_PATTERN, key, FNM_NOESCAPE) == 0)
-		{
-				return ec_dict_data_stime(data->cbk, data->which, key);
-		}
+    if (fnmatch(GF_XATTR_STIME_PATTERN, key, FNM_NOESCAPE) == 0)
+    {
+        return ec_dict_data_stime(data->cbk, data->which, key);
+    }
 
-		if (fnmatch(MARKER_XATTR_PREFIX ".*." XTIME, key, FNM_NOESCAPE) == 0) {
-				return ec_dict_data_max64(data->cbk, data->which, key);
-		}
+    if (fnmatch(MARKER_XATTR_PREFIX ".*." XTIME, key, FNM_NOESCAPE) == 0) {
+        return ec_dict_data_max64(data->cbk, data->which, key);
+    }
 
-		return 0;
+    return 0;
 }
 
 int32_t ec_dict_combine(ec_cbk_data_t * cbk, int32_t which)
 {
-		dict_t * dict;
-		ec_dict_combine_t data;
-		int32_t err = 0;
 
-		data.cbk = cbk;
-		data.which = which;
+    dict_t * dict;
+    ec_dict_combine_t data;
+    int32_t err = 0;
 
-		dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
-		if (dict != NULL) {
-				err = dict_foreach(dict, ec_dict_data_combine, &data);
-				if (err != 0) {
-						gf_msg (cbk->fop->xl->name, GF_LOG_ERROR, -err,
-										EC_MSG_DICT_COMBINE_FAIL,
-										"Dictionary combination failed");
+    data.cbk = cbk;
+    data.which = which;
 
-						return err;
-				}
-		}
+    dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
+    if (dict != NULL) {
+        err = dict_foreach(dict, ec_dict_data_combine, &data);
+        if (err != 0) {
+            gf_msg (cbk->fop->xl->name, GF_LOG_ERROR, -err,
+                    EC_MSG_DICT_COMBINE_FAIL,
+                    "Dictionary combination failed");
 
-		return 0;
+            return err;
+        }
+    }
+
+    return 0;
 }
 
 int32_t ec_vector_compare(struct iovec * dst_vector, int32_t dst_count,
-				struct iovec * src_vector, int32_t src_count)
+                          struct iovec * src_vector, int32_t src_count)
 {
-		int32_t dst_size = 0, src_size = 0;
+    int32_t dst_size = 0, src_size = 0;
 
-		if (dst_count > 0)
-		{
-				dst_size = iov_length(dst_vector, dst_count);
-		}
-		if (src_count > 0)
-		{
-				src_size = iov_length(src_vector, src_count);
-		}
+    if (dst_count > 0)
+    {
+        dst_size = iov_length(dst_vector, dst_count);
+    }
+    if (src_count > 0)
+    {
+        src_size = iov_length(src_vector, src_count);
+    }
 
-		return (dst_size == src_size);
+    return (dst_size == src_size);
 }
 
 int32_t ec_flock_compare(struct gf_flock * dst, struct gf_flock * src)
 {
-		if ((dst->l_type != src->l_type) ||
-						(dst->l_whence != src->l_whence) ||
-						(dst->l_start != src->l_start) ||
-						(dst->l_len != src->l_len) ||
-						(dst->l_pid != src->l_pid) ||
-						!is_same_lkowner(&dst->l_owner, &src->l_owner))
-		{
-				return 0;
-		}
 
-		return 1;
+    if ((dst->l_type != src->l_type) ||
+        (dst->l_whence != src->l_whence) ||
+        (dst->l_start != src->l_start) ||
+        (dst->l_len != src->l_len) ||
+        (dst->l_pid != src->l_pid) ||
+        !is_same_lkowner(&dst->l_owner, &src->l_owner))
+    {
+        return 0;
+    }
+
+    return 1;
 }
 
 void ec_statvfs_combine(struct statvfs * dst, struct statvfs * src)
 {
-		if (dst->f_bsize < src->f_bsize)
-		{
-				dst->f_bsize = src->f_bsize;
-		}
 
-		if (dst->f_frsize < src->f_frsize)
-		{
-				dst->f_blocks *= dst->f_frsize;
-				dst->f_blocks /= src->f_frsize;
+    if (dst->f_bsize < src->f_bsize)
+    {
+        dst->f_bsize = src->f_bsize;
+    }
 
-				dst->f_bfree *= dst->f_frsize;
-				dst->f_bfree /= src->f_frsize;
+    if (dst->f_frsize < src->f_frsize)
+    {
+        dst->f_blocks *= dst->f_frsize;
+        dst->f_blocks /= src->f_frsize;
 
-				dst->f_bavail *= dst->f_frsize;
-				dst->f_bavail /= src->f_frsize;
+        dst->f_bfree *= dst->f_frsize;
+        dst->f_bfree /= src->f_frsize;
 
-				dst->f_frsize = src->f_frsize;
-		}
-		else if (dst->f_frsize > src->f_frsize)
-		{
-				src->f_blocks *= src->f_frsize;
-				src->f_blocks /= dst->f_frsize;
+        dst->f_bavail *= dst->f_frsize;
+        dst->f_bavail /= src->f_frsize;
 
-				src->f_bfree *= src->f_frsize;
-				src->f_bfree /= dst->f_frsize;
+        dst->f_frsize = src->f_frsize;
+    }
+    else if (dst->f_frsize > src->f_frsize)
+    {
+        src->f_blocks *= src->f_frsize;
+        src->f_blocks /= dst->f_frsize;
 
-				src->f_bavail *= src->f_frsize;
-				src->f_bavail /= dst->f_frsize;
-		}
-		if (dst->f_blocks > src->f_blocks)
-		{
-				dst->f_blocks = src->f_blocks;
-		}
-		if (dst->f_bfree > src->f_bfree)
-		{
-				dst->f_bfree = src->f_bfree;
-		}
-		if (dst->f_bavail > src->f_bavail)
-		{
-				dst->f_bavail = src->f_bavail;
-		}
+        src->f_bfree *= src->f_frsize;
+        src->f_bfree /= dst->f_frsize;
 
-		if (dst->f_files < src->f_files)
-		{
-				dst->f_files = src->f_files;
-		}
-		if (dst->f_ffree > src->f_ffree)
-		{
-				dst->f_ffree = src->f_ffree;
-		}
-		if (dst->f_favail > src->f_favail)
-		{
-				dst->f_favail = src->f_favail;
-		}
-		if (dst->f_namemax > src->f_namemax)
-		{
-				dst->f_namemax = src->f_namemax;
-		}
+        src->f_bavail *= src->f_frsize;
+        src->f_bavail /= dst->f_frsize;
+    }
+    if (dst->f_blocks > src->f_blocks)
+    {
+        dst->f_blocks = src->f_blocks;
+    }
+    if (dst->f_bfree > src->f_bfree)
+    {
+        dst->f_bfree = src->f_bfree;
+    }
+    if (dst->f_bavail > src->f_bavail)
+    {
+        dst->f_bavail = src->f_bavail;
+    }
 
-		if (dst->f_flag != src->f_flag)
-		{
-				gf_msg_debug (THIS->name, 0,
-								"Mismatching file system flags "
-								"(%lX, %lX)",
-								dst->f_flag, src->f_flag);
-		}
-		dst->f_flag &= src->f_flag;
+    if (dst->f_files < src->f_files)
+    {
+        dst->f_files = src->f_files;
+    }
+    if (dst->f_ffree > src->f_ffree)
+    {
+        dst->f_ffree = src->f_ffree;
+    }
+    if (dst->f_favail > src->f_favail)
+    {
+        dst->f_favail = src->f_favail;
+    }
+    if (dst->f_namemax > src->f_namemax)
+    {
+        dst->f_namemax = src->f_namemax;
+    }
+
+    if (dst->f_flag != src->f_flag)
+    {
+        gf_msg_debug (THIS->name, 0,
+                "Mismatching file system flags "
+                "(%lX, %lX)",
+                dst->f_flag, src->f_flag);
+    }
+    dst->f_flag &= src->f_flag;
 }
 
 int32_t ec_combine_check(ec_cbk_data_t * dst, ec_cbk_data_t * src,
-				ec_combine_f combine)
+                         ec_combine_f combine)
 {
-		ec_fop_data_t * fop = dst->fop;
+    ec_fop_data_t * fop = dst->fop;
 
-		if (fop->id==GF_FOP_WRITE ){
-				//printf("A pipelined write %d %d\n",src->idx,dst->idx);
-				gf_msg_debug(fop->xl->name,0,"A pipelined cbk");
-				if((src->combined & dst->combined)!=0)
-						return 0;
-		}
+    if (dst->op_ret != src->op_ret)
+    {
+        gf_msg_debug (fop->xl->name, 0, "Mismatching return code in "
+                                            "answers of '%s': %d <-> %d",
+               ec_fop_name(fop->id), dst->op_ret, src->op_ret);
 
-		if (dst->op_ret != src->op_ret)
-		{
-				gf_msg_debug (fop->xl->name, 0, "Mismatching return code in "
-								"answers of '%s': %d <-> %d",
-								ec_fop_name(fop->id), dst->op_ret, src->op_ret);
+        return 0;
+    }
+    if (dst->op_ret < 0)
+    {
+        if (dst->op_errno != src->op_errno)
+        {
+            gf_msg_debug (fop->xl->name, 0, "Mismatching errno code in "
+                                                "answers of '%s': %d <-> %d",
+                   ec_fop_name(fop->id), dst->op_errno, src->op_errno);
 
-				return 0;
-		}
-		if (dst->op_ret < 0)
-		{
-				if (dst->op_errno != src->op_errno)
-				{
-						gf_msg_debug (fop->xl->name, 0, "Mismatching errno code in "
-										"answers of '%s': %d <-> %d",
-										ec_fop_name(fop->id), dst->op_errno, src->op_errno);
+            return 0;
+        }
+    }
 
-						return 0;
-				}
-		}
+    if (!ec_dict_compare(dst->xdata, src->xdata))
+    {
+        gf_msg (fop->xl->name, GF_LOG_WARNING, 0,
+                EC_MSG_XDATA_MISMATCH,
+                "Mismatching xdata in answers "
+                "of '%s'", ec_fop_name(fop->id));
 
-		if (!ec_dict_compare(dst->xdata, src->xdata))
-		{
-				gf_msg (fop->xl->name, GF_LOG_WARNING, 0,
-								EC_MSG_XDATA_MISMATCH,
-								"Mismatching xdata in answers "
-								"of '%s'", ec_fop_name(fop->id));
+        return 0;
+    }
 
-				return 0;
-		}
+    if ((dst->op_ret >= 0) && (combine != NULL))
+    {
+        return combine(fop, dst, src);
+    }
 
-		if ((dst->op_ret >= 0) && (combine != NULL))
-		{
-				return combine(fop, dst, src);
-		}
-
-		return 1;
+    return 1;
 }
 
 void ec_combine (ec_cbk_data_t *newcbk, ec_combine_f combine)
@@ -1034,4 +1041,5 @@ void ec_combine (ec_cbk_data_t *newcbk, ec_combine_f combine)
 		if (needed > 0) {
 				ec_dispatch_next(fop, newcbk->idx);
 		}
+
 }

@@ -9,6 +9,7 @@ TEST glusterd;
 TEST pidof glusterd
 
 # Non arbiter replica 3 volumes should not have arbiter-count option enabled.
+TEST mkdir -p $B0/${V0}{0,1,2}
 TEST $CLI volume create $V0 replica 3 $H0:$B0/${V0}{0,1,2}
 TEST $CLI volume start $V0
 TEST glusterfs --volfile-id=$V0 --volfile-server=$H0 --entry-timeout=0 $M0;
@@ -17,7 +18,14 @@ EXPECT_WITHIN $UMOUNT_TIMEOUT "Y" force_umount $M0
 TEST $CLI volume stop $V0
 TEST $CLI volume delete $V0
 
+# Make sure we clean up *all the way* so we don't get "brick X is already part
+# of a volume" errors.
+cleanup;
+TEST glusterd;
+TEST pidof glusterd
+
 # Create and mount a replica 3 arbiter volume.
+TEST mkdir -p $B0/${V0}{0,1,2}
 TEST $CLI volume create $V0 replica 3 arbiter 1 $H0:$B0/${V0}{0,1,2}
 TEST $CLI volume set $V0 performance.write-behind off
 TEST $CLI volume set $V0 cluster.self-heal-daemon off
@@ -49,7 +57,7 @@ TEST $CLI volume set $V0 cluster.self-heal-daemon on
 EXPECT_WITHIN $PROCESS_UP_TIMEOUT "Y" glustershd_up_status
 EXPECT_WITHIN $CHILD_UP_TIMEOUT "1" afr_child_up_status_in_shd $V0 0
 EXPECT_WITHIN $CHILD_UP_TIMEOUT "1" afr_child_up_status_in_shd $V0 2
-TEST $CLI volume heal $V0
+$CLI volume heal $V0
 EXPECT_WITHIN $HEAL_TIMEOUT '1' echo $(count_sh_entries $B0/$V0"1")
 EXPECT_WITHIN $HEAL_TIMEOUT '1' echo $(count_sh_entries $B0/$V0"2")
 

@@ -14,15 +14,41 @@
 
 #include "xlator.h"
 #include "compat-errno.h"
+#include "shard-messages.h"
 
 #define GF_SHARD_DIR ".shard"
 #define SHARD_MIN_BLOCK_SIZE  (4 * GF_UNIT_MB)
 #define SHARD_MAX_BLOCK_SIZE  (4 * GF_UNIT_TB)
 #define SHARD_XATTR_PREFIX "trusted.glusterfs.shard."
 #define GF_XATTR_SHARD_BLOCK_SIZE "trusted.glusterfs.shard.block-size"
-#define GF_XATTR_SHARD_FILE_SIZE  "trusted.glusterfs.shard.file-size"
-#define SHARD_ROOT_GFID "be318638-e8a0-4c6d-977d-7a937aa84806"
 #define SHARD_INODE_LRU_LIMIT 4096
+#define SHARD_MAX_INODES 16384
+/**
+ *  Bit masks for the valid flag, which is used while updating ctx
+**/
+#define SHARD_MASK_BLOCK_SIZE          (1 << 0)
+#define SHARD_MASK_PROT                (1 << 1)
+#define SHARD_MASK_NLINK               (1 << 2)
+#define SHARD_MASK_UID                 (1 << 3)
+#define SHARD_MASK_GID                 (1 << 4)
+#define SHARD_MASK_SIZE                (1 << 6)
+#define SHARD_MASK_BLOCKS              (1 << 7)
+#define SHARD_MASK_TIMES               (1 << 8)
+#define SHARD_MASK_OTHERS              (1 << 9)
+#define SHARD_MASK_REFRESH_RESET       (1 << 10)
+
+#define SHARD_INODE_WRITE_MASK (SHARD_MASK_SIZE | SHARD_MASK_BLOCKS         \
+                                                | SHARD_MASK_TIMES)
+
+#define SHARD_LOOKUP_MASK (SHARD_MASK_PROT | SHARD_MASK_NLINK | SHARD_MASK_UID \
+                           | SHARD_MASK_GID | SHARD_MASK_TIMES                 \
+                           | SHARD_MASK_OTHERS)
+
+#define SHARD_ALL_MASK (SHARD_MASK_BLOCK_SIZE | SHARD_MASK_PROT               \
+                        | SHARD_MASK_NLINK | SHARD_MASK_UID | SHARD_MASK_GID  \
+                        | SHARD_MASK_SIZE | SHARD_MASK_BLOCKS                 \
+                        | SHARD_MASK_TIMES | SHARD_MASK_OTHERS)
+
 
 #define get_lowest_block(off, shard_size) ((off) / (shard_size))
 #define get_highest_block(off, len, shard_size) \
@@ -78,7 +104,8 @@
                                      &local->block_size,                      \
                                      sizeof (local->block_size));             \
         if (__ret) {                                                          \
-                gf_log (this->name, GF_LOG_WARNING, "Failed to set key: %s "  \
+                gf_msg (this->name, GF_LOG_WARNING, 0,                        \
+                        SHARD_MSG_DICT_SET_FAILED, "Failed to set key: %s "   \
                         "on path %s", GF_XATTR_SHARD_BLOCK_SIZE, loc->path);  \
                 goto label;                                                   \
         }                                                                     \
@@ -90,7 +117,8 @@
         __ret = dict_set_bin (xattr_req, GF_XATTR_SHARD_FILE_SIZE,            \
                               __size_attr, 8 * 4);                            \
         if (__ret) {                                                          \
-                gf_log (this->name, GF_LOG_WARNING, "Failed to set key: %s "  \
+                gf_msg (this->name, GF_LOG_WARNING, 0,                        \
+                        SHARD_MSG_DICT_SET_FAILED, "Failed to set key: %s "   \
                         "on path %s", GF_XATTR_SHARD_FILE_SIZE, loc->path);   \
                 GF_FREE (__size_attr);                                        \
                 goto label;                                                   \
@@ -105,8 +133,9 @@
         if (__ret) {                                                          \
                 local->op_ret = -1;                                           \
                 local->op_errno = ENOMEM;                                     \
-                gf_log (this->name, GF_LOG_WARNING, "Failed to set dict"      \
-                        " value: key:%s for %s.", GF_XATTR_SHARD_FILE_SIZE,   \
+                gf_msg (this->name, GF_LOG_WARNING, 0,                        \
+                        SHARD_MSG_DICT_SET_FAILED, "Failed to set dict value:"\
+                        " key:%s for %s.", GF_XATTR_SHARD_FILE_SIZE,          \
                         uuid_utoa (gfid));                                    \
                 goto label;                                                   \
         }                                                                     \
@@ -130,10 +159,26 @@
                 }                                                             \
 } while (0)
 
+#define SHARD_TIME_UPDATE(ctx_sec, ctx_nsec, new_sec, new_nsec) do {          \
+                if (ctx_sec == new_sec)                                       \
+                        ctx_nsec = new_nsec = max (new_nsec, ctx_nsec);       \
+                else if (ctx_sec > new_sec) {                                 \
+                        new_sec = ctx_sec;                                    \
+                        new_nsec = ctx_nsec;                                  \
+                } else {                                                      \
+                        ctx_sec = new_sec;                                    \
+                        ctx_nsec = new_nsec;                                  \
+                }                                                             \
+        } while (0)
+
+
 typedef struct shard_priv {
         uint64_t block_size;
         uuid_t dot_shard_gfid;
         inode_t *dot_shard_inode;
+        gf_lock_t lock;
+        int inode_count;
+        struct list_head ilist_head;
 } shard_priv_t;
 
 typedef struct {
@@ -199,7 +244,6 @@ typedef struct shard_local {
         gf_dirent_t entries_head;
         gf_boolean_t is_set_fsid;
         gf_boolean_t list_inited;
-        gf_boolean_t is_write_extending;
         shard_post_fop_handler_t handler;
         shard_post_lookup_shards_fop_handler_t pls_fop_handler;
         shard_post_resolve_fop_handler_t post_res_handler;
@@ -213,10 +257,16 @@ typedef struct shard_local {
 } shard_local_t;
 
 typedef struct shard_inode_ctx {
-        uint32_t rdev;
         uint64_t block_size; /* The block size with which this inode is
                                 sharded */
-        mode_t mode;
+        struct iatt stat;
+        gf_boolean_t refresh;
+        /* The following members of inode ctx will be applicable only to the
+         * individual shards' ctx and never the base file ctx.
+         */
+        struct list_head ilist;
+        uuid_t base_gfid;
+        int block_num;
 } shard_inode_ctx_t;
 
 #endif /* __SHARD_H__ */

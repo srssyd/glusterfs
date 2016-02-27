@@ -51,6 +51,7 @@
 #define GLUSTERD_SHARED_STORAGE_KEY     "cluster.enable-shared-storage"
 
 #define GANESHA_HA_CONF  CONFDIR "/ganesha-ha.conf"
+#define GANESHA_EXPORT_DIRECTORY        CONFDIR"/exports"
 #define GLUSTERD_SNAPS_MAX_HARD_LIMIT 256
 #define GLUSTERD_SNAPS_DEF_SOFT_LIMIT_PERCENT 90
 #define GLUSTERD_SNAPS_MAX_SOFT_LIMIT_PERCENT 100
@@ -77,6 +78,9 @@ typedef struct glusterd_volinfo_ glusterd_volinfo_t;
 struct glusterd_snap_;
 typedef struct glusterd_snap_ glusterd_snap_t;
 
+/* For every new feature please add respective enum of new feature
+ * at the end of latest enum (just before the GD_OP_MAX enum)
+ */
 typedef enum glusterd_op_ {
         GD_OP_NONE = 0,
         GD_OP_CREATE_VOLUME,
@@ -110,6 +114,9 @@ typedef enum glusterd_op_ {
         GD_OP_BARRIER,
         GD_OP_GANESHA,
         GD_OP_BITROT,
+        GD_OP_DETACH_TIER,
+        GD_OP_TIER_MIGRATE,
+        GD_OP_SCRUB_STATUS,
         GD_OP_MAX,
 } glusterd_op_t;
 
@@ -208,7 +215,7 @@ struct glusterd_brickinfo {
          * a replica 3 volume with arbiter enabled.
          */
         uint16_t           group;
-
+        uuid_t             nsr_uuid;
 };
 
 typedef struct glusterd_brickinfo glusterd_brickinfo_t;
@@ -270,6 +277,20 @@ typedef struct _auth auth_t;
 #define CAPS_OFFLOAD_SNAPSHOT 0x00000008
 #define CAPS_OFFLOAD_ZERO     0x00000020
 
+struct glusterd_bitrot_scrub_ {
+        char        *scrub_state;
+        char        *scrub_impact;
+        char        *scrub_freq;
+        uint64_t    scrubbed_files;
+        uint64_t    unsigned_files;
+        uint64_t    last_scrub_time;
+        uint64_t    scrub_duration;
+        uint64_t    error_count;
+};
+
+typedef struct glusterd_bitrot_scrub_ glusterd_bitrot_scrub_t;
+
+
 struct glusterd_rebalance_ {
         gf_defrag_status_t       defrag_status;
         uint64_t                 rebalance_files;
@@ -314,6 +335,7 @@ typedef struct tier_info_ {
         int                       hot_replica_count;
         int                       promoted;
         int                       demoted;
+        uint16_t                  cur_tier_hot;
 } gd_tier_info_t;
 
 struct glusterd_volinfo_ {
@@ -329,7 +351,12 @@ struct glusterd_volinfo_ {
                                             the volume which is snapped. In
                                             case of a non-snap volume, this
                                             field will be initialized as N/A */
-        char                      volname[GD_VOLUME_NAME_MAX];
+        char                      volname[GD_VOLUME_NAME_MAX + 5];
+                                        /* An extra 5 bytes are allocated.
+                                         * Reason is, As part of the tiering
+                                         * volfile generation code, we are
+                                         * temporarily appending either hot
+                                         * or cold */
         int                       type;
         int                       brick_count;
         uint64_t                  snap_count;
@@ -370,6 +397,9 @@ struct glusterd_volinfo_ {
         /* Replace brick status */
         glusterd_replace_brick_t  rep_brick;
 
+        /* Bitrot scrub status*/
+        glusterd_bitrot_scrub_t   bitrot_scrub;
+
         int                       version;
         uint32_t                  quota_conf_version;
         uint32_t                  cksum;
@@ -398,6 +428,7 @@ struct glusterd_volinfo_ {
         gd_quorum_status_t        quorum_status;
 
         glusterd_snapdsvc_t       snapd;
+        int32_t                   quota_xattr_version;
 };
 
 typedef enum gd_snap_status_ {
@@ -596,11 +627,11 @@ typedef ssize_t (*gd_serialize_t) (struct iovec outmsg, void *args);
                 STACK_DESTROY (frame->root);                            \
         } while (0)
 
-#define GLUSTERD_GET_DEFRAG_PROCESS(path, volinfo) do {                     \
-                if (volinfo->rebal.defrag_cmd == GF_DEFRAG_CMD_START_TIER)  \
-                        snprintf (path, NAME_MAX, "tier"); \
-                else                                                        \
-                        snprintf (path, NAME_MAX, "rebalance"); \
+#define GLUSTERD_GET_DEFRAG_PROCESS(path, volinfo) do {                 \
+                if (volinfo->rebal.defrag_cmd == GF_DEFRAG_CMD_START_TIER) \
+                        snprintf (path, NAME_MAX, "tier");              \
+                else                                                    \
+                        snprintf (path, NAME_MAX, "rebalance");         \
         } while (0)
 
 #define GLUSTERD_GET_DEFRAG_DIR(path, volinfo, priv) do {               \
@@ -968,6 +999,9 @@ int
 glusterd_rebalance_rpc_create (glusterd_volinfo_t *volinfo,
                                gf_boolean_t reconnect);
 
+int glusterd_rebalance_defrag_init (glusterd_volinfo_t *volinfo,
+                                    defrag_cbk_fn_t cbk);
+
 int glusterd_handle_cli_heal_volume (rpcsvc_request_t *req);
 
 int glusterd_handle_cli_list_volume (rpcsvc_request_t *req);
@@ -1106,7 +1140,8 @@ glusterd_build_snap_device_path (char *device, char *snapname,
 
 int32_t
 glusterd_snap_remove (dict_t *rsp_dict, glusterd_snap_t *snap,
-                      gf_boolean_t remove_lvm, gf_boolean_t force);
+                      gf_boolean_t remove_lvm, gf_boolean_t force,
+                      gf_boolean_t is_clone);
 int32_t
 glusterd_snapshot_cleanup (dict_t *dict, char **op_errstr, dict_t *rsp_dict);
 
@@ -1132,5 +1167,9 @@ glusterd_handle_snap_limit (dict_t *dict, dict_t *rsp_dict);
 
 gf_boolean_t
 glusterd_should_i_stop_bitd ();
+
+int
+glusterd_remove_brick_migrate_cbk (glusterd_volinfo_t *volinfo,
+                                   gf_defrag_status_t status);
 
 #endif

@@ -20,6 +20,7 @@
 #include "xlator.h"
 #include "logging.h"
 #include "timer.h"
+#include "syscall.h"
 #include "defaults.h"
 #include "compat.h"
 #include "compat-errno.h"
@@ -596,7 +597,7 @@ glusterd_store_delete_brick (glusterd_brickinfo_t *brickinfo, char *delete_path)
 
         GF_FREE (tmppath);
 
-        ret = unlink (brickpath);
+        ret = sys_unlink (brickpath);
 
         if ((ret < 0) && (errno != ENOENT)) {
                 gf_msg_debug (this->name, 0, "Unlink failed on %s",
@@ -645,14 +646,14 @@ glusterd_store_remove_bricks (glusterd_volinfo_t *volinfo, char *delete_path)
         snprintf (brickdir, sizeof (brickdir), "%s/%s", delete_path,
                   GLUSTERD_BRICK_INFO_DIR);
 
-        dir = opendir (brickdir);
+        dir = sys_opendir (brickdir);
 
         GF_FOR_EACH_ENTRY_IN_DIR (entry, dir);
 
         while (entry) {
                 snprintf (path, sizeof (path), "%s/%s",
                           brickdir, entry->d_name);
-                ret = unlink (path);
+                ret = sys_unlink (path);
                 if (ret && errno != ENOENT) {
                         gf_msg_debug (this->name, 0, "Unable to unlink %s",
                                       path);
@@ -660,9 +661,9 @@ glusterd_store_remove_bricks (glusterd_volinfo_t *volinfo, char *delete_path)
                 GF_FOR_EACH_ENTRY_IN_DIR (entry, dir);
         }
 
-        closedir (dir);
+        sys_closedir (dir);
 
-        ret = rmdir (brickdir);
+        ret = sys_rmdir (brickdir);
 
 out:
         gf_msg_debug (this->name, 0, "Returning with %d", ret);
@@ -904,11 +905,14 @@ glusterd_volume_exclude_options_write (int fd, glusterd_volinfo_t *volinfo)
         char         buf[PATH_MAX]  = "";
         int32_t      ret            = -1;
         xlator_t    *this           = NULL;
+        glusterd_conf_t  *conf      = NULL;
 
         this = THIS;
         GF_ASSERT (this);
         GF_ASSERT (fd > 0);
         GF_ASSERT (volinfo);
+        conf = this->private;
+        GF_VALIDATE_OR_GOTO (this->name, (conf != NULL), out);
 
         snprintf (buf, sizeof (buf), "%d", volinfo->type);
         ret = gf_store_save_value (fd, GLUSTERD_STORE_KEY_VOL_TYPE, buf);
@@ -941,17 +945,30 @@ glusterd_volume_exclude_options_write (int fd, glusterd_volinfo_t *volinfo)
         if (ret)
                 goto out;
 
-        snprintf (buf, sizeof (buf), "%d", volinfo->disperse_count);
-        ret = gf_store_save_value (fd, GLUSTERD_STORE_KEY_VOL_DISPERSE_CNT,
-                                   buf);
-        if (ret)
-                goto out;
+        if ((conf->op_version >= GD_OP_VERSION_3_7_6) &&
+            volinfo->arbiter_count) {
+                snprintf (buf, sizeof (buf), "%d", volinfo->arbiter_count);
+                ret = gf_store_save_value (fd,
+                                           GLUSTERD_STORE_KEY_VOL_ARBITER_CNT,
+                                           buf);
+                if (ret)
+                        goto out;
+        }
 
-        snprintf (buf, sizeof (buf), "%d", volinfo->redundancy_count);
-        ret = gf_store_save_value (fd, GLUSTERD_STORE_KEY_VOL_REDUNDANCY_CNT,
-                                   buf);
-        if (ret)
-                goto out;
+        if (conf->op_version >= GD_OP_VERSION_3_6_0) {
+                snprintf (buf, sizeof (buf), "%d", volinfo->disperse_count);
+                ret = gf_store_save_value (fd,
+                                           GLUSTERD_STORE_KEY_VOL_DISPERSE_CNT,
+                                           buf);
+                if (ret)
+                        goto out;
+
+                snprintf (buf, sizeof (buf), "%d", volinfo->redundancy_count);
+                ret = gf_store_save_value (fd, GLUSTERD_STORE_KEY_VOL_REDUNDANCY_CNT,
+                                           buf);
+                if (ret)
+                        goto out;
+        }
 
         snprintf (buf, sizeof (buf), "%d", volinfo->version);
         ret = gf_store_save_value (fd, GLUSTERD_STORE_KEY_VOL_VERSION, buf);
@@ -997,6 +1014,16 @@ glusterd_volume_exclude_options_write (int fd, glusterd_volinfo_t *volinfo)
         if (volinfo->caps) {
                 snprintf (buf, sizeof (buf), "%d", volinfo->caps);
                 ret = gf_store_save_value (fd, GLUSTERD_STORE_KEY_VOL_CAPS,
+                                           buf);
+                if (ret)
+                        goto out;
+        }
+
+        if (conf->op_version >= GD_OP_VERSION_3_7_6) {
+                snprintf (buf, sizeof (buf), "%d",
+                          volinfo->quota_xattr_version);
+                ret = gf_store_save_value (fd,
+                                           GLUSTERD_STORE_KEY_VOL_QUOTA_VERSION,
                                            buf);
                 if (ret)
                         goto out;
@@ -1659,7 +1686,7 @@ glusterd_store_delete_volume (glusterd_volinfo_t *volinfo)
         snprintf (trashdir, sizeof (trashdir), "%s/"GLUSTERD_TRASH,
                   priv->workdir);
 
-        ret = mkdir (trashdir, 0777);
+        ret = sys_mkdir (trashdir, 0777);
         if (ret && errno != EEXIST) {
                 gf_msg (this->name, GF_LOG_ERROR, errno,
                         GD_MSG_CREATE_DIR_FAILED, "Failed to create trash "
@@ -1668,7 +1695,7 @@ glusterd_store_delete_volume (glusterd_volinfo_t *volinfo)
                 goto out;
         }
 
-        ret = rename (pathname, delete_path);
+        ret = sys_rename (pathname, delete_path);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, errno,
                         GD_MSG_DIR_OP_FAILED, "Failed to rename volume "
@@ -1725,7 +1752,7 @@ glusterd_store_delete_snap (glusterd_snap_t *snap)
         snprintf (trashdir, sizeof (trashdir), "%s/"GLUSTERD_TRASH,
                   priv->workdir);
 
-        ret = mkdir (trashdir, 0777);
+        ret = sys_mkdir (trashdir, 0777);
         if (ret && errno != EEXIST) {
                 gf_msg (this->name, GF_LOG_ERROR, errno,
                         GD_MSG_CREATE_DIR_FAILED, "Failed to create trash "
@@ -1734,7 +1761,7 @@ glusterd_store_delete_snap (glusterd_snap_t *snap)
                 goto out;
         }
 
-        ret = rename (pathname, delete_path);
+        ret = sys_rename (pathname, delete_path);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, errno,
                         GD_MSG_DIR_OP_FAILED, "Failed to rename snap "
@@ -1743,7 +1770,7 @@ glusterd_store_delete_snap (glusterd_snap_t *snap)
                 goto out;
         }
 
-        dir = opendir (delete_path);
+        dir = sys_opendir (delete_path);
         if (!dir) {
                 gf_msg_debug (this->name, 0, "Failed to open directory %s.",
                                  delete_path);
@@ -1754,7 +1781,7 @@ glusterd_store_delete_snap (glusterd_snap_t *snap)
         GF_FOR_EACH_ENTRY_IN_DIR (entry, dir);
         while (entry) {
                 snprintf (path, PATH_MAX, "%s/%s", delete_path, entry->d_name);
-                ret = stat (path, &st);
+                ret = sys_stat (path, &st);
                 if (ret == -1) {
                         gf_msg_debug (this->name, 0, "Failed to stat "
                                 "entry %s", path);
@@ -1762,9 +1789,9 @@ glusterd_store_delete_snap (glusterd_snap_t *snap)
                 }
 
                 if (S_ISDIR (st.st_mode))
-                        ret = rmdir (path);
+                        ret = sys_rmdir (path);
                 else
-                        ret = unlink (path);
+                        ret = sys_unlink (path);
 
                 if (ret) {
                         gf_msg_debug (this->name, 0, " Failed to remove "
@@ -1779,18 +1806,18 @@ stat_failed:
                 GF_FOR_EACH_ENTRY_IN_DIR (entry, dir);
         }
 
-        ret = closedir (dir);
+        ret = sys_closedir (dir);
         if (ret) {
                 gf_msg_debug (this->name, 0, "Failed to close dir %s.",
                                 delete_path);
         }
 
-        ret = rmdir (delete_path);
+        ret = sys_rmdir (delete_path);
         if (ret) {
                 gf_msg_debug (this->name, 0, "Failed to rmdir: %s",
                         delete_path);
         }
-        ret = rmdir (trashdir);
+        ret = sys_rmdir (trashdir);
         if (ret) {
                 gf_msg_debug (this->name, 0, "Failed to rmdir: %s",
                                  trashdir);
@@ -1840,7 +1867,7 @@ glusterd_store_global_info (xlator_t *this)
                 handle = conf->handle;
 
         /* These options need to be available for all users */
-        ret = chmod (handle->path, 0644);
+        ret = sys_chmod (handle->path, 0644);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, errno,
                         GD_MSG_FILE_OP_FAILED, "chmod error for %s",
@@ -2573,6 +2600,8 @@ glusterd_store_update_volinfo (glusterd_volinfo_t *volinfo)
                 } else if (!strncmp (key, GLUSTERD_STORE_KEY_VOL_REPLICA_CNT,
                                      strlen (GLUSTERD_STORE_KEY_VOL_REPLICA_CNT))) {
                         volinfo->replica_count = atoi (value);
+                } else if (!strcmp (key, GLUSTERD_STORE_KEY_VOL_ARBITER_CNT)) {
+                        volinfo->arbiter_count = atoi (value);
                 } else if (!strncmp (key, GLUSTERD_STORE_KEY_VOL_DISPERSE_CNT,
                                      strlen (GLUSTERD_STORE_KEY_VOL_DISPERSE_CNT))) {
                         volinfo->disperse_count = atoi (value);
@@ -2660,6 +2689,9 @@ glusterd_store_update_volinfo (glusterd_volinfo_t *volinfo)
                 } else if (!strncmp (key, GLUSTERD_STORE_KEY_COLD_TYPE,
                                      strlen (key))) {
                         volinfo->tier_info.cold_type = atoi (value);
+                } else if (!strncmp (key, GLUSTERD_STORE_KEY_VOL_QUOTA_VERSION,
+                            strlen (GLUSTERD_STORE_KEY_VOL_QUOTA_VERSION))) {
+                        volinfo->quota_xattr_version = atoi (value);
                 } else {
 
                         if (is_key_glusterd_hooks_friendly (key)) {
@@ -2748,10 +2780,18 @@ glusterd_store_update_volinfo (glusterd_volinfo_t *volinfo)
                         break;
 
                         case GF_CLUSTER_TYPE_TIER:
-                                volinfo->tier_info.cold_dist_leaf_count =
-                                        glusterd_calc_dist_leaf_count (
-                                                volinfo->tier_info.cold_replica_count, 1);
-                                break;
+                        if (volinfo->tier_info.cold_type ==
+                                        GF_CLUSTER_TYPE_DISPERSE)
+                                volinfo->tier_info.cold_dist_leaf_count
+                                        = volinfo->disperse_count;
+                        else
+                                volinfo->tier_info.cold_dist_leaf_count
+                                        = glusterd_calc_dist_leaf_count (
+                                                        volinfo->tier_info.
+                                                        cold_replica_count,
+                                                        1);
+
+                        break;
 
                         default:
                                 GF_ASSERT (0);
@@ -2993,7 +3033,7 @@ glusterd_store_retrieve_volumes (xlator_t  *this, glusterd_snap_t *snap)
                 snprintf (path, PATH_MAX, "%s/%s", priv->workdir,
                           GLUSTERD_VOLUME_DIR_PREFIX);
 
-        dir = opendir (path);
+        dir = sys_opendir (path);
 
         if (!dir) {
                 gf_msg (this->name, GF_LOG_ERROR, errno,
@@ -3036,7 +3076,7 @@ next:
 
 out:
         if (dir)
-                closedir (dir);
+                sys_closedir (dir);
         gf_msg_debug (this->name, 0, "Returning with %d", ret);
 
         return ret;
@@ -3201,7 +3241,7 @@ glusterd_recreate_vol_brick_mounts (xlator_t  *this,
 
                 /* Check if the brickinfo path is present.
                  * If not create the brick_mount_path */
-                ret = lstat (brickinfo->path, &st_buf);
+                ret = sys_lstat (brickinfo->path, &st_buf);
                 if (ret) {
                         if (errno == ENOENT) {
                                 ret = mkdir_p (brick_mount_path, 0777,
@@ -3464,7 +3504,7 @@ glusterd_store_retrieve_missed_snaps_list (xlator_t  *this)
         }
 
         do {
-                ret = gf_store_read_and_tokenize (fp, buf,
+                ret = gf_store_read_and_tokenize (fp, buf, sizeof (buf),
                                                   &missed_node_info, &value,
                                                   &store_errno);
                 if (ret) {
@@ -3536,7 +3576,7 @@ glusterd_store_retrieve_snaps (xlator_t  *this)
 
         snprintf (path, PATH_MAX, "%s/snaps", priv->workdir);
 
-        dir = opendir (path);
+        dir = sys_opendir (path);
 
         if (!dir) {
                 /* If snaps dir doesn't exists ignore the error for
@@ -3576,7 +3616,7 @@ glusterd_store_retrieve_snaps (xlator_t  *this)
 
 out:
         if (dir)
-                closedir (dir);
+                sys_closedir (dir);
         gf_msg_debug (this->name, 0, "Returning with %d", ret);
 
         return ret;
@@ -3732,13 +3772,13 @@ glusterd_store_delete_peerinfo (glusterd_peerinfo_t *peerinfo)
                 snprintf (hostname_path, PATH_MAX, "%s/%s",
                           peerdir, peerinfo->hostname);
 
-                ret = unlink (hostname_path);
+                ret = sys_unlink (hostname_path);
 
                 if (!ret)
                         goto out;
         }
 
-        ret = unlink (filepath);
+        ret = sys_unlink (filepath);
         if (ret && (errno == ENOENT))
                 ret = 0;
 
@@ -3841,12 +3881,12 @@ glusterd_peerinfo_hostname_shandle_check_destroy (glusterd_peerinfo_t *peerinfo)
 
         glusterd_store_hostname_peerpath_set (peerinfo, peerfpath,
                                               sizeof (peerfpath));
-        ret = stat (peerfpath, &stbuf);
+        ret = sys_stat (peerfpath, &stbuf);
         if (!ret) {
                 if (peerinfo->shandle)
                         gf_store_handle_destroy (peerinfo->shandle);
                 peerinfo->shandle = NULL;
-                ret = unlink (peerfpath);
+                ret = sys_unlink (peerfpath);
         }
         return ret;
 }
@@ -3961,7 +4001,6 @@ glusterd_store_retrieve_peers (xlator_t *this)
         struct dirent            *entry              = NULL;
         char                      path[PATH_MAX]     = {0,};
         glusterd_peerinfo_t      *peerinfo           = NULL;
-        char                     *hostname           = NULL;
         gf_store_handle_t        *shandle            = NULL;
         char                      filepath[PATH_MAX] = {0,};
         gf_store_iter_t          *iter               = NULL;
@@ -3979,7 +4018,7 @@ glusterd_store_retrieve_peers (xlator_t *this)
         snprintf (path, PATH_MAX, "%s/%s", priv->workdir,
                   GLUSTERD_PEER_DIR_PREFIX);
 
-        dir = opendir (path);
+        dir = sys_opendir (path);
 
         if (!dir) {
                 gf_msg (this->name, GF_LOG_ERROR, errno,
@@ -4044,7 +4083,6 @@ glusterd_store_retrieve_peers (xlator_t *this)
                                                       &op_errno);
                 }
                 if (op_errno != GD_STORE_EOF) {
-                        GF_FREE(hostname);
                         goto out;
                 }
 
@@ -4087,7 +4125,7 @@ out:
                 glusterd_peerinfo_cleanup (peerinfo);
 
         if (dir)
-                closedir (dir);
+                sys_closedir (dir);
         gf_msg_debug (this->name, 0, "Returning with %d", ret);
 
         return ret;
@@ -4195,7 +4233,8 @@ glusterd_snap_cleanup (xlator_t  *this)
                         }
                 } else if (snap->snap_status != GD_SNAP_STATUS_IN_USE) {
                         ret = glusterd_snap_remove (dict, snap,
-                                                    _gf_true, _gf_true);
+                                                    _gf_true, _gf_true,
+                                                    _gf_false);
                         if (ret) {
                                 gf_msg (this->name, GF_LOG_ERROR, 0,
                                         GD_MSG_SNAP_REMOVE_FAIL,

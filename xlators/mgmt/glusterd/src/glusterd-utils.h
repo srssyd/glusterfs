@@ -65,6 +65,9 @@ glusterd_unlock (uuid_t owner);
 int32_t
 glusterd_get_uuid (uuid_t *uuid);
 
+char*
+gd_get_shd_key (int type);
+
 int
 glusterd_submit_reply (rpcsvc_request_t *req, void *arg,
                        struct iovec *payload, int payloadcount,
@@ -361,7 +364,12 @@ glusterd_get_trusted_client_filepath (char *filepath,
 int
 glusterd_restart_rebalance (glusterd_conf_t *conf);
 
-void
+int32_t
+glusterd_create_sub_tier_volinfo (glusterd_volinfo_t *volinfo,
+                                   glusterd_volinfo_t **dup_volinfo,
+                                   gf_boolean_t is_hot_tier,
+                                   const char *new_name);
+int
 glusterd_restart_rebalance_for_volume (glusterd_volinfo_t *volinfo);
 
 void
@@ -431,6 +439,11 @@ int32_t
 glusterd_handle_node_rsp (dict_t *req_ctx, void *pending_entry,
                           glusterd_op_t op, dict_t *rsp_dict, dict_t *op_ctx,
                           char **op_errstr, gd_node_type type);
+int
+glusterd_volume_bitrot_scrub_use_rsp_dict (dict_t *aggr, dict_t *rsp_dict);
+
+int
+glusterd_volume_heal_use_rsp_dict (dict_t *aggr, dict_t *rsp_dict);
 
 int32_t
 glusterd_check_if_quota_trans_enabled (glusterd_volinfo_t *volinfo);
@@ -613,6 +626,9 @@ glusterd_check_client_op_version_support (char *volname, uint32_t op_version,
 gf_boolean_t
 glusterd_have_peers ();
 
+gf_boolean_t
+glusterd_have_volumes ();
+
 void
 glusterd_get_rebalance_volfile (glusterd_volinfo_t *volinfo,
                                 char *path, int path_len);
@@ -638,6 +654,8 @@ glusterd_import_quota_conf (dict_t *peer_data, int vol_idx,
 gf_boolean_t
 glusterd_is_shd_compatible_volume (glusterd_volinfo_t *volinfo);
 
+gf_boolean_t
+glusterd_is_shd_compatible_type (int type);
 
 gf_boolean_t
 glusterd_are_all_volumes_stopped ();
@@ -668,4 +686,8 @@ glusterd_defrag_rpc_put (glusterd_defrag_info_t *defrag);
 int32_t
 glusterd_count_connected_peers (int32_t *count);
 
+int
+glusterd_volume_brick_for_each (glusterd_volinfo_t *volinfo, void *data,
+               int (*fn) (glusterd_volinfo_t *, glusterd_brickinfo_t *,
+                          dict_t *mod_dict, void *));
 #endif

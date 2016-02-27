@@ -313,7 +313,8 @@ GFAPI_SYMVER_PUBLIC_DEFAULT(glfs_h_getattrs, 3.4.2);
 
 int
 glfs_h_getxattrs_common (struct glfs *fs, struct glfs_object *object,
-                         dict_t **xattr, const char *name)
+                         dict_t **xattr, const char *name,
+                         gf_boolean_t is_listxattr)
 {
         int                 ret = 0;
         xlator_t        *subvol = NULL;
@@ -326,6 +327,17 @@ glfs_h_getxattrs_common (struct glfs *fs, struct glfs_object *object,
                 return -1;
         }
 
+        if (!is_listxattr) {
+                if (!name || *name == '\0') {
+                        errno = EINVAL;
+                        return -1;
+                }
+
+                if (strlen(name) > GF_XATTR_NAME_MAX) {
+                        errno = ENAMETOOLONG;
+                        return -1;
+                }
+        }
         /* get the active volume */
         subvol = glfs_active_subvol (fs);
         if (!subvol) {
@@ -375,7 +387,8 @@ pub_glfs_h_getxattrs (struct glfs *fs, struct glfs_object *object,
         DECLARE_OLD_THIS;
         __GLFS_ENTRY_VALIDATE_FS (fs, invalid_fs);
 
-        ret = glfs_h_getxattrs_common (fs, object, &xattr, name);
+        ret = glfs_h_getxattrs_common (fs, object, &xattr, name,
+                                       (name == NULL));
         if (ret)
                 goto out;
 
@@ -473,6 +486,16 @@ pub_glfs_h_setxattrs (struct glfs *fs, struct glfs_object *object,
         if ((fs == NULL) || (object == NULL) ||
                  (name == NULL) || (value == NULL)) {
                 errno = EINVAL;
+                return -1;
+        }
+
+        if (!name || *name == '\0') {
+                errno = EINVAL;
+                return -1;
+        }
+
+        if (strlen(name) > GF_XATTR_NAME_MAX) {
+                errno = ENAMETOOLONG;
                 return -1;
         }
 
@@ -663,8 +686,10 @@ out:
                 inode_unref (inode);
 
         if (ret && glfd) {
-                glfs_fd_destroy (glfd);
+                GF_REF_PUT (glfd);
                 glfd = NULL;
+        } else if (glfd) {
+                glfd->state = GLFD_OPEN;
         }
 
         glfs_subvol_done (fs, subvol);
@@ -785,9 +810,11 @@ out:
         if (xattr_req)
                 dict_unref (xattr_req);
 
-        if (glfd) {
-                glfs_fd_destroy (glfd);
+        if (ret && glfd) {
+                GF_REF_PUT (glfd);
                 glfd = NULL;
+        } else if (glfd) {
+                glfd->state = GLFD_OPEN;
         }
 
         glfs_subvol_done (fs, subvol);
@@ -1128,9 +1155,10 @@ out:
                 inode_unref (inode);
 
         if (ret && glfd) {
-                glfs_fd_destroy (glfd);
+                GF_REF_PUT (glfd);
                 glfd = NULL;
-        } else {
+        } else if (glfd) {
+                glfd->state = GLFD_OPEN;
                 fd_bind (glfd->fd);
                 glfs_fd_bind (glfd);
         }
@@ -1249,6 +1277,7 @@ pub_glfs_h_create_from_handle (struct glfs *fs, unsigned char *handle, int len,
         inode_t            *newinode = NULL;
         xlator_t           *subvol = NULL;
         struct glfs_object *object = NULL;
+        uint64_t            ctx_value = LOOKUP_NOT_NEEDED;
 
         /* validate in args */
         if ((fs == NULL) || (handle == NULL) || (len != GFAPI_HANDLE_LENGTH)) {
@@ -1267,6 +1296,10 @@ pub_glfs_h_create_from_handle (struct glfs *fs, unsigned char *handle, int len,
         }
 
         memcpy (loc.gfid, handle, GFAPI_HANDLE_LENGTH);
+
+        /* make sure the gfid received is valid */
+        GF_VALIDATE_OR_GOTO ("glfs_h_create_from_handle",
+                             !(gf_uuid_is_null (loc.gfid)), out);
 
         newinode = inode_find (subvol->itable, loc.gfid);
         if (newinode) {
@@ -1293,9 +1326,12 @@ pub_glfs_h_create_from_handle (struct glfs *fs, unsigned char *handle, int len,
         }
 
         newinode = inode_link (loc.inode, 0, 0, &iatt);
-        if (newinode)
+        if (newinode) {
+                if (newinode == loc.inode) {
+                        inode_ctx_set (newinode, THIS, &ctx_value);
+                }
                 inode_lookup (newinode);
-        else {
+        } else {
                 gf_msg (subvol->name, GF_LOG_WARNING, EINVAL,
                         API_MSG_INVALID_ENTRY,
                         "inode linking of %s failed: %s",
@@ -1339,6 +1375,9 @@ GFAPI_SYMVER_PUBLIC_DEFAULT(glfs_h_create_from_handle, 3.4.2);
 int
 pub_glfs_h_close (struct glfs_object *object)
 {
+        /* since glfs_h_* objects hold a reference to inode
+         * it is safe to keep lookup count to '0' */
+        inode_forget (object->inode, 0);
         inode_unref (object->inode);
         GF_FREE (object);
 
@@ -2059,7 +2098,8 @@ pub_glfs_h_acl_get (struct glfs *fs, struct glfs_object *object,
         } else
                 new_object = object;
 
-        ret = glfs_h_getxattrs_common (fs, new_object, &xattr, acl_key);
+        ret = glfs_h_getxattrs_common (fs, new_object, &xattr, acl_key,
+                                       _gf_false);
         if (ret)
                 goto out;
 

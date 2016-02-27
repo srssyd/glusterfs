@@ -363,9 +363,10 @@ cli_opt_parse (char *opt, struct cli_state *state)
 
         oarg = strtail (opt, "log-level=");
         if (oarg) {
-                state->log_level = glusterd_check_log_level(oarg);
-                if (state->log_level == -1)
+                int log_level = glusterd_check_log_level(oarg);
+                if (log_level == -1)
                         return -1;
+                state->log_level = (gf_loglevel_t) log_level;
                 return 0;
         }
 
@@ -405,7 +406,7 @@ parse_cmdline (int argc, char *argv[], struct cli_state *state)
         state->argv=&argv[1];
 
         /* Do this first so that an option can override. */
-        if (access(SECURE_ACCESS_FILE,F_OK) == 0) {
+        if (sys_access (SECURE_ACCESS_FILE, F_OK) == 0) {
                 state->ctx->secure_mgmt = 1;
         }
 
@@ -496,8 +497,10 @@ _cli_err (const char *fmt, ...)
         va_start (ap, fmt);
 
 #ifdef HAVE_READLINE
-        if (state->rl_enabled && !state->rl_processing)
-                return cli_rl_err(state, fmt, ap);
+        if (state->rl_enabled && !state->rl_processing) {
+                va_end (ap);
+                return cli_rl_err (state, fmt, ap);
+        }
 #endif
 
         ret = vfprintf (stderr, fmt, ap);
@@ -520,8 +523,10 @@ _cli_out (const char *fmt, ...)
         va_start (ap, fmt);
 
 #ifdef HAVE_READLINE
-        if (state->rl_enabled && !state->rl_processing)
-                return cli_rl_out(state, fmt, ap);
+        if (state->rl_enabled && !state->rl_processing) {
+                va_end (ap);
+                return cli_rl_out (state, fmt, ap);
+        }
 #endif
 
         ret = vprintf (fmt, ap);

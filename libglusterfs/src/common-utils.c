@@ -34,6 +34,7 @@
 #if defined(GF_BSD_HOST_OS) || defined(GF_DARWIN_HOST_OS)
 #include <sys/sysctl.h>
 #endif
+#include <libgen.h>
 
 #include "compat-errno.h"
 #include "logging.h"
@@ -53,11 +54,6 @@
 
 typedef int32_t (*rw_op_t)(int32_t fd, char *buf, int32_t size);
 typedef int32_t (*rwv_op_t)(int32_t fd, const struct iovec *buf, int32_t size);
-
-struct dnscache6 {
-        struct addrinfo *first;
-        struct addrinfo *next;
-};
 
 void
 md5_wrapper(const unsigned char *data, size_t len, char *md5)
@@ -89,7 +85,7 @@ mkdir_p (char *path, mode_t mode, gf_boolean_t allow_symlinks)
                         continue;
 
                 dir[i] = '\0';
-                ret = mkdir (dir, mode);
+                ret = sys_mkdir (dir, mode);
                 if (ret && errno != EEXIST) {
                         gf_msg ("", GF_LOG_ERROR, errno, LG_MSG_DIR_OP_FAILED,
                                 "Failed due to reason");
@@ -97,7 +93,7 @@ mkdir_p (char *path, mode_t mode, gf_boolean_t allow_symlinks)
                 }
 
                 if (ret && errno == EEXIST && !allow_symlinks) {
-                        ret = lstat (dir, &stbuf);
+                        ret = sys_lstat (dir, &stbuf);
                         if (ret)
                                 goto out;
 
@@ -113,7 +109,7 @@ mkdir_p (char *path, mode_t mode, gf_boolean_t allow_symlinks)
 
         } while (path[i++] != '\0');
 
-        ret = stat (dir, &stbuf);
+        ret = sys_stat (dir, &stbuf);
         if (ret || !S_ISDIR (stbuf.st_mode)) {
                 if (ret == 0)
                         errno = 0;
@@ -210,7 +206,7 @@ out:
 }
 
 /**
- * gf_resolve_parent_path -- Given a path, returns an allocated string
+ * gf_resolve_path_parent -- Given a path, returns an allocated string
  *                           containing the parent's path.
  * @path: Path to parse
  * @return: The parent path if found, NULL otherwise
@@ -287,9 +283,6 @@ gf_resolve_ip6 (const char *hostname,
                 memset(&hints, 0, sizeof(hints));
                 hints.ai_family   = family;
                 hints.ai_socktype = SOCK_STREAM;
-#ifndef __NetBSD__
-                hints.ai_flags    = AI_ADDRCONFIG;
-#endif
 
                 ret = gf_asprintf (&port_str, "%d", port);
                 if (-1 == ret) {
@@ -359,6 +352,135 @@ err:
         return -1;
 }
 
+/**
+ * gf_dnscache_init -- Initializes a dnscache struct and sets the ttl
+ *                     to the specified value in the parameter.
+ *
+ * @ttl: the TTL in seconds
+ * @return: SUCCESS: Pointer to an allocated dnscache struct
+ *          FAILURE: NULL
+ */
+struct dnscache *
+gf_dnscache_init (time_t ttl)
+{
+        struct dnscache *cache = GF_MALLOC (sizeof (*cache),
+                                            gf_common_mt_dnscache);
+        cache->cache_dict = NULL;
+        cache->ttl = ttl;
+        return cache;
+}
+
+/**
+ * gf_dnscache_entry_init -- Initialize a dnscache entry
+ *
+ * @return: SUCCESS: Pointer to an allocated dnscache entry struct
+ *          FAILURE: NULL
+ */
+struct dnscache_entry *
+gf_dnscache_entry_init ()
+{
+        struct dnscache_entry *entry = GF_CALLOC (1, sizeof (*entry),
+                                                 gf_common_mt_dnscache_entry);
+        return entry;
+}
+
+/**
+ * gf_dnscache_entry_deinit -- Free memory used by a dnscache entry
+ *
+ * @entry: Pointer to deallocate
+ */
+void
+gf_dnscache_entry_deinit (struct dnscache_entry *entry)
+{
+        GF_FREE (entry->ip);
+        GF_FREE (entry->fqdn);
+        GF_FREE (entry);
+}
+
+/**
+ * gf_rev_dns_lookup -- Perform a reverse DNS lookup on the IP address.
+ *
+ * @ip: The IP address to perform a reverse lookup on
+ *
+ * @return: success: Allocated string containing the hostname
+ *          failure: NULL
+ */
+char *
+gf_rev_dns_lookup_cached (const char *ip, struct dnscache *dnscache)
+{
+        char               *fqdn = NULL;
+        int                ret  = 0;
+        dict_t             *cache = NULL;
+        data_t             *entrydata = NULL;
+        struct dnscache_entry *dnsentry = NULL;
+        gf_boolean_t        from_cache = _gf_false;
+
+        if (!dnscache)
+                goto out;
+
+        if (!dnscache->cache_dict) {
+                dnscache->cache_dict = dict_new ();
+                if (!dnscache->cache_dict) {
+                        goto out;
+                }
+        }
+        cache = dnscache->cache_dict;
+
+        /* Quick cache lookup to see if we already hold it */
+        entrydata = dict_get (cache, (char *)ip);
+        if (entrydata) {
+                dnsentry = (struct dnscache_entry *)entrydata->data;
+                /* First check the TTL & timestamp */
+                if (time (NULL) - dnsentry->timestamp > dnscache->ttl) {
+                        gf_dnscache_entry_deinit (dnsentry);
+                        entrydata->data = NULL; /* Mark this as 'null' so
+                                                 * dict_del () doesn't try free
+                                                 * this after we've already
+                                                 * freed it.
+                                                 */
+
+                        dict_del (cache, (char *)ip); /* Remove this entry */
+                } else {
+                        /* Cache entry is valid, get the FQDN and return */
+                        fqdn = dnsentry->fqdn;
+                        from_cache = _gf_true; /* Mark this as from cache */
+                        goto out;
+                }
+        }
+
+        /* Get the FQDN */
+        ret =  gf_get_hostname_from_ip ((char *)ip, &fqdn);
+        if (ret != 0)
+                goto out;
+
+        if (!fqdn) {
+                gf_log_callingfn ("resolver", GF_LOG_CRITICAL,
+                                  "Allocation failed for the host address");
+                goto out;
+        }
+
+        from_cache = _gf_false;
+out:
+        /* Insert into the cache */
+        if (fqdn && !from_cache) {
+                struct dnscache_entry *entry = gf_dnscache_entry_init ();
+
+                if (!entry) {
+                        goto out;
+                }
+                entry->fqdn = fqdn;
+                entry->ip = gf_strdup (ip);
+                if (!ip) {
+                        gf_dnscache_entry_deinit (entry);
+                        goto out;
+                }
+                entry->timestamp = time (NULL);
+
+                entrydata = bin_to_data (entry, sizeof (*entry));
+                dict_set (cache, (char *)ip, entrydata);
+        }
+        return fqdn;
+}
 
 struct xldump {
 	int lineno;
@@ -1451,11 +1573,12 @@ err:
 }
 
 int
-gf_string2bytesize_range (const char *str, uint64_t *n, uint64_t max)
+gf_string2bytesize_range (const char *str, uint64_t *n, uint64_t umax)
 {
         double        value      = 0.0;
-        uint64_t      int_value  = 0;
+        int64_t       int_value  = 0;
         uint64_t      unit       = 0;
+        int64_t       max        = 0;
         char         *tail       = NULL;
         int           old_errno  = 0;
         const char   *s          = NULL;
@@ -1467,6 +1590,8 @@ gf_string2bytesize_range (const char *str, uint64_t *n, uint64_t max)
                 errno = EINVAL;
                 return -1;
         }
+
+        max = umax & 0x7fffffffffffffffLL;
 
         for (s = str; *s != '\0'; s++) {
                 if (isspace (*s))
@@ -1768,16 +1893,16 @@ get_checksum_for_file (int fd, uint32_t *checksum)
         char buf[GF_CHECKSUM_BUF_SIZE] = {0,};
 
         /* goto first place */
-        lseek (fd, 0L, SEEK_SET);
+        sys_lseek (fd, 0L, SEEK_SET);
         do {
-                ret = read (fd, &buf, GF_CHECKSUM_BUF_SIZE);
+                ret = sys_read (fd, &buf, GF_CHECKSUM_BUF_SIZE);
                 if (ret > 0)
                         compute_checksum (buf, GF_CHECKSUM_BUF_SIZE,
                                           checksum);
         } while (ret > 0);
 
         /* set it back */
-        lseek (fd, 0L, SEEK_SET);
+        sys_lseek (fd, 0L, SEEK_SET);
 
         return ret;
 }
@@ -1804,7 +1929,7 @@ get_checksum_for_path (char *path, uint32_t *checksum)
 
 out:
         if (fd != -1)
-                close (fd);
+                sys_close (fd);
 
         return ret;
 }
@@ -1827,7 +1952,7 @@ get_file_mtime (const char *path, time_t *stamp)
         GF_VALIDATE_OR_GOTO (THIS->name, path, out);
         GF_VALIDATE_OR_GOTO (THIS->name, stamp, out);
 
-        ret = stat (path, &f_stat);
+        ret = sys_stat (path, &f_stat);
         if (ret < 0) {
                 gf_msg (THIS->name, GF_LOG_ERROR, errno,
                         LG_MSG_FILE_STAT_FAILED, "failed to stat %s",
@@ -1984,7 +2109,7 @@ get_nth_word (const char *str, int n)
         if (!end)
                 goto out;
 
-        word_len = abs (end - start);
+        word_len = labs (end - start);
 
         word = GF_CALLOC (1, word_len + 1, gf_common_mt_strdup);
         if (!word)
@@ -2187,6 +2312,14 @@ valid_ipv6_address (char *address, int length, gf_boolean_t wildcard_acc)
         int is_compressed = 0;
 
         tmp = gf_strdup (address);
+
+        /* Check for '%' for link local addresses */
+        endptr = strchr(tmp, '%');
+        if (endptr) {
+                *endptr = '\0';
+                length = strlen(tmp);
+                endptr = NULL;
+        }
 
         /* Check for compressed form */
         if (length <= 0 || tmp[length - 1] == ':') {
@@ -2442,8 +2575,8 @@ gf_array_insertionsort (void *A, int l, int r, size_t elem_size,
         for(i = l; i < N; i++) {
                 Temp = gf_array_elem (A, i, elem_size);
                 j = i - 1;
-                while((cmp (Temp, gf_array_elem (A, j, elem_size))
-		       < 0) && j>=0) {
+                while (j >= 0 && (cmp (Temp, gf_array_elem (A, j, elem_size))
+                      < 0)) {
                         gf_elem_swap (Temp, gf_array_elem (A, j, elem_size),
                                       elem_size);
                         Temp = gf_array_elem (A, j, elem_size);
@@ -2772,7 +2905,7 @@ gf_get_reserved_ports ()
                 goto out;
         }
 
-        ret = read (proc_fd, buffer, sizeof (buffer));
+        ret = sys_read (proc_fd, buffer, sizeof (buffer));
         if (ret < 0) {
                 gf_msg ("glusterfs", GF_LOG_WARNING, errno,
                         LG_MSG_FILE_OP_FAILED, "could not read the file %s for"
@@ -2783,7 +2916,7 @@ gf_get_reserved_ports ()
 
 out:
         if (proc_fd != -1)
-                close (proc_fd);
+                sys_close (proc_fd);
 #endif /* GF_LINUX_HOST_OS */
         return ports_info;
 }
@@ -3114,9 +3247,18 @@ gf_is_local_addr (char *hostname)
         gf_boolean_t    found = _gf_false;
         char            *ip = NULL;
         xlator_t        *this = NULL;
+        struct          addrinfo hints;
 
         this = THIS;
-        ret = getaddrinfo (hostname, NULL, NULL, &result);
+
+        memset (&hints, 0, sizeof (hints));
+        /*
+         * Removing AI_ADDRCONFIG from default_hints
+         * for being able to use link local ipv6 addresses
+         */
+        hints.ai_family = AF_UNSPEC;
+
+        ret = getaddrinfo (hostname, NULL, &hints, &result);
 
         if (ret != 0) {
                 gf_msg (this->name, GF_LOG_ERROR, 0, LG_MSG_GETADDRINFO_FAILED,
@@ -3156,15 +3298,19 @@ gf_is_same_address (char *name1, char *name2)
         struct addrinfo         *q = NULL;
         gf_boolean_t            ret = _gf_false;
         int                     gai_err = 0;
+        struct                  addrinfo hints;
 
-        gai_err = getaddrinfo(name1,NULL,NULL,&addr1);
+        memset (&hints, 0, sizeof (hints));
+        hints.ai_family = AF_UNSPEC;
+
+        gai_err = getaddrinfo(name1, NULL, &hints, &addr1);
         if (gai_err != 0) {
                 gf_msg (name1, GF_LOG_WARNING, 0, LG_MSG_GETADDRINFO_FAILED,
                         "error in getaddrinfo: %s\n", gai_strerror(gai_err));
                 goto out;
         }
 
-        gai_err = getaddrinfo(name2,NULL,NULL,&addr2);
+        gai_err = getaddrinfo(name2, NULL, &hints, &addr2);
         if (gai_err != 0) {
                 gf_msg (name2, GF_LOG_WARNING, 0, LG_MSG_GETADDRINFO_FAILED,
                         "error in getaddrinfo: %s\n", gai_strerror(gai_err));
@@ -3347,7 +3493,7 @@ gf_skip_header_section (int fd, int header_len)
 {
         int  ret           = -1;
 
-        ret = lseek (fd, header_len, SEEK_SET);
+        ret = sys_lseek (fd, header_len, SEEK_SET);
         if (ret == (off_t) -1) {
                 gf_msg ("", GF_LOG_ERROR, 0, LG_MSG_SKIP_HEADER_FAILED,
                         "Failed to skip header section");
@@ -3507,7 +3653,7 @@ gf_set_timestamp  (const char *src, const char* dest)
         GF_ASSERT (src);
         GF_ASSERT (dest);
 
-        ret = stat (src, &sb);
+        ret = sys_stat (src, &sb);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, errno,
                         LG_MSG_FILE_STAT_FAILED, "stat on %s", src);
@@ -3523,7 +3669,7 @@ gf_set_timestamp  (const char *src, const char* dest)
          * requiremnt. Hence using 'utimes'. This can be updated
          * to 'utimensat' if we need timestamp in nanoseconds.
          */
-        ret = utimes (dest, new_time);
+        ret = sys_utimes (dest, new_time);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, errno, LG_MSG_UTIMES_FAILED,
                         "utimes on %s", dest);
@@ -3589,7 +3735,7 @@ gf_backtrace_fillframes (char *buf)
 
         fp = fdopen (fd, "r");
         if (!fp) {
-                close (fd);
+                sys_close (fd);
                 ret = -1;
                 goto out;
         }
@@ -3614,7 +3760,7 @@ out:
         if (fp)
                 fclose (fp);
 
-        unlink (tmpl);
+        sys_unlink (tmpl);
 
         return (idx > 0)? 0: -1;
 
@@ -3838,7 +3984,7 @@ recursive_rmdir (const char *delete_path)
         GF_ASSERT (this);
         GF_VALIDATE_OR_GOTO (this->name, delete_path, out);
 
-        dir = opendir (delete_path);
+        dir = sys_opendir (delete_path);
         if (!dir) {
                 gf_msg_debug (this->name, 0, "Failed to open directory %s. "
                               "Reason : %s", delete_path, strerror (errno));
@@ -3849,7 +3995,7 @@ recursive_rmdir (const char *delete_path)
         GF_FOR_EACH_ENTRY_IN_DIR (entry, dir);
         while (entry) {
                 snprintf (path, PATH_MAX, "%s/%s", delete_path, entry->d_name);
-                ret = lstat (path, &st);
+                ret = sys_lstat (path, &st);
                 if (ret == -1) {
                         gf_msg_debug (this->name, 0, "Failed to stat entry %s :"
                                       " %s", path, strerror (errno));
@@ -3859,7 +4005,7 @@ recursive_rmdir (const char *delete_path)
                 if (S_ISDIR (st.st_mode))
                         ret = recursive_rmdir (path);
                 else
-                        ret = unlink (path);
+                        ret = sys_unlink (path);
 
                 if (ret) {
                         gf_msg_debug (this->name, 0, " Failed to remove %s. "
@@ -3872,13 +4018,13 @@ recursive_rmdir (const char *delete_path)
                 GF_FOR_EACH_ENTRY_IN_DIR (entry, dir);
         }
 
-        ret = closedir (dir);
+        ret = sys_closedir (dir);
         if (ret) {
                 gf_msg_debug (this->name, 0, "Failed to close dir %s. Reason :"
                               " %s", delete_path, strerror (errno));
         }
 
-        ret = rmdir (delete_path);
+        ret = sys_rmdir (delete_path);
         if (ret) {
                 gf_msg_debug (this->name, 0, "Failed to rmdir: %s,err: %s",
                               delete_path, strerror (errno));
@@ -3964,7 +4110,7 @@ gf_nread (int fd, void *buf, size_t count)
         ssize_t  read_bytes    = 0;
 
         for (read_bytes = 0; read_bytes < count; read_bytes += ret) {
-                ret = read (fd, buf + read_bytes, count - read_bytes);
+                ret = sys_read (fd, buf + read_bytes, count - read_bytes);
                 if (ret == 0) {
                         break;
                 } else if (ret < 0) {
@@ -3987,7 +4133,7 @@ gf_nwrite (int fd, const void *buf, size_t count)
         ssize_t  written    = 0;
 
         for (written = 0; written != count; written += ret) {
-                ret = write (fd, buf + written, count - written);
+                ret = sys_write (fd, buf + written, count - written);
                 if (ret < 0) {
                         if (errno == EINTR)
                                 ret = 0;
@@ -4011,4 +4157,133 @@ void
 _unmask_cancellation (void)
 {
         (void) pthread_setcancelstate (PTHREAD_CANCEL_ENABLE, NULL);
+}
+
+
+const char *
+fop_enum_to_pri_string (glusterfs_fop_t fop)
+{
+        switch (fop) {
+        case GF_FOP_OPEN:
+        case GF_FOP_STAT:
+        case GF_FOP_FSTAT:
+        case GF_FOP_LOOKUP:
+        case GF_FOP_ACCESS:
+        case GF_FOP_READLINK:
+        case GF_FOP_OPENDIR:
+        case GF_FOP_STATFS:
+        case GF_FOP_READDIR:
+        case GF_FOP_READDIRP:
+                return "HIGH";
+
+        case GF_FOP_CREATE:
+        case GF_FOP_FLUSH:
+        case GF_FOP_LK:
+        case GF_FOP_INODELK:
+        case GF_FOP_FINODELK:
+        case GF_FOP_ENTRYLK:
+        case GF_FOP_FENTRYLK:
+        case GF_FOP_UNLINK:
+        case GF_FOP_SETATTR:
+        case GF_FOP_FSETATTR:
+        case GF_FOP_MKNOD:
+        case GF_FOP_MKDIR:
+        case GF_FOP_RMDIR:
+        case GF_FOP_SYMLINK:
+        case GF_FOP_RENAME:
+        case GF_FOP_LINK:
+        case GF_FOP_SETXATTR:
+        case GF_FOP_GETXATTR:
+        case GF_FOP_FGETXATTR:
+        case GF_FOP_FSETXATTR:
+        case GF_FOP_REMOVEXATTR:
+        case GF_FOP_FREMOVEXATTR:
+        case GF_FOP_IPC:
+                return "NORMAL";
+
+        case GF_FOP_READ:
+        case GF_FOP_WRITE:
+        case GF_FOP_FSYNC:
+        case GF_FOP_TRUNCATE:
+        case GF_FOP_FTRUNCATE:
+        case GF_FOP_FSYNCDIR:
+        case GF_FOP_XATTROP:
+        case GF_FOP_FXATTROP:
+        case GF_FOP_RCHECKSUM:
+        case GF_FOP_ZEROFILL:
+        case GF_FOP_FALLOCATE:
+        case GF_FOP_SEEK:
+                return "LOW";
+
+        case GF_FOP_NULL:
+        case GF_FOP_FORGET:
+        case GF_FOP_RELEASE:
+        case GF_FOP_RELEASEDIR:
+        case GF_FOP_GETSPEC:
+        case GF_FOP_MAXVALUE:
+        case GF_FOP_DISCARD:
+                return "LEAST";
+        }
+        return "UNKNOWN";
+}
+
+const char *
+fop_enum_to_string (glusterfs_fop_t fop)
+{
+        static const char *const str_map[] = {
+                "NULL",
+                "STAT",
+                "READLINK",
+                "MKNOD",
+                "MKDIR",
+                "UNLINK",
+                "RMDIR",
+                "SYMLINK",
+                "RENAME",
+                "LINK",
+                "TRUNCATE",
+                "OPEN",
+                "READ",
+                "WRITE",
+                "STATFS",
+                "FLUSH",
+                "FSYNC",
+                "SETXATTR",
+                "GETXATTR",
+                "REMOVEXATTR",
+                "OPENDIR",
+                "FSYNCDIR",
+                "ACCESS",
+                "CREATE",
+                "FTRUNCATE",
+                "FSTAT",
+                "LK",
+                "LOOKUP",
+                "READDIR",
+                "INODELK",
+                "FINODELK",
+                "ENTRYLK",
+                "FENTRYLK",
+                "XATTROP",
+                "FXATTROP",
+                "FGETXATTR",
+                "FSETXATTR",
+                "RCHECKSUM",
+                "SETATTR",
+                "FSETATTR",
+                "READDIRP",
+                "FORGET",
+                "RELEASE",
+                "RELEASEDIR",
+                "GETSPEC",
+                "FREMOVEXATTR",
+                "FALLOCATE",
+                "DISCARD",
+                "ZEROFILL",
+                "IPC",
+                "MAXVALUE"};
+        if (fop <= GF_FOP_MAXVALUE)
+                return str_map[fop];
+
+        return "UNKNOWNFOP";
 }

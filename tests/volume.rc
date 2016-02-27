@@ -19,6 +19,13 @@ function online_brick_count ()
     pgrep glusterfsd | wc -l
 }
 
+function brick_up_status {
+        local vol=$1
+        local host=$2
+        local brick=$3
+        $CLI volume status $vol $host:$brick --xml | sed -ne 's/.*<status>\([01]\)<\/status>/\1/p'
+}
+
 function volume_option()
 {
         local vol=$1
@@ -33,6 +40,10 @@ function rebalance_status_field {
         #strings in the 'cli_vol_task_status_str' char array of cli-rpc-ops.c
 
         $CLI volume rebalance $1 status | awk '{print $7,$8,$9}' |sed -n 3p |tr -d '[^0-9+\.]'|sed 's/ *$//g'
+}
+
+function detach_tier_status_field {
+        $CLI volume tier  $1 detach status | awk '{print $7,$8,$9}' |sed -n 3p |tr -d '[^0-9+\.]'|sed 's/ *$//g'
 }
 
 function remove_brick_status_completed_field {
@@ -539,7 +550,7 @@ function num_graphs
 function get_aux()
 {
 ##Check if a auxiliary mount is there
-df -h 2>&1 | grep "/var/run/gluster/$V0" -
+df -h 2>&1 | grep -e "[[:space:]]/run/gluster/${V0}$" -e "[[:space:]]/var/run/gluster/${V0}$" -
 
 if [ $? -eq 0 ]
 then
@@ -624,3 +635,10 @@ function quota_hl_exceeded()
 }
 
 
+function scrub_status()
+{
+        local vol=$1;
+        local field=$2;
+
+        $CLI volume bitrot $vol scrub status | grep "^$field: " | sed 's/.*: //';
+}

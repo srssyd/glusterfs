@@ -13,8 +13,6 @@
 #include "statedump.h"
 #include <stdio.h>
 #include "libglusterfs-messages.h"
-#include "xlator.h"
-
 
 /*
   TODO: implement destroy margins and prefetching of arenas
@@ -809,6 +807,7 @@ iobuf_unref (struct iobuf *iobuf)
 
         if (!ref)
                 iobuf_put (iobuf);
+
 out:
         return;
 }
@@ -1015,7 +1014,7 @@ int
 iobref_merge (struct iobref *to, struct iobref *from)
 {
         int           i = 0;
-        int           ret = -1;
+        int           ret = 0;
         struct iobuf *iobuf = NULL;
 
         GF_VALIDATE_OR_GOTO ("iobuf", to, out);

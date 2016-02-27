@@ -1,7 +1,7 @@
 xlator_LTLIBRARIES = glusterd.la
 xlatordir = $(libdir)/glusterfs/$(PACKAGE_VERSION)/xlator/mgmt
 glusterd_la_CPPFLAGS = $(AM_CPPFLAGS) "-DFILTERDIR=\"$(libdir)/glusterfs/$(PACKAGE_VERSION)/filter\""
-glusterd_la_LDFLAGS = -module -avoid-version
+glusterd_la_LDFLAGS = -module $(GF_XLATOR_DEFAULT_LDFLAGS)
 glusterd_la_SOURCES = glusterd.c glusterd-handler.c glusterd-sm.c \
 	glusterd-op-sm.c glusterd-utils.c glusterd-rpc-ops.c \
 	glusterd-store.c glusterd-handshake.c glusterd-pmap.c \
@@ -60,7 +60,7 @@ CLEANFILES =
 
 install-data-hook:
 if GF_INSTALL_GLUSTERD_WORKDIR
-	$(MKDIR_P) $(DESTDIR)$(GLUSTERD_WORKDIR)
+	$(mkdir_p) $(DESTDIR)$(GLUSTERD_WORKDIR)
 	(stat $(DESTDIR)$(sysconfdir)/glusterd && \
 	    mv $(DESTDIR)$(sysconfdir)/glusterd $(DESTDIR)$(GLUSTERD_WORKDIR)) || true;
 	(ln -sf $(DESTDIR)$(GLUSTERD_WORKDIR) $(sysconfdir)/glusterd) || true;

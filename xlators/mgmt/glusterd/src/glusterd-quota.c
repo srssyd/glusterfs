@@ -92,6 +92,15 @@ glusterd_is_quota_supported (int32_t type, char **op_errstr)
              type == GF_QUOTA_OPTION_TYPE_REMOVE))
                 goto out;
 
+        /* Quota xattr version implemented in 3.7.6
+         * quota-version is incremented when quota is enabled
+         * so don't allow enabling quota in heterogeneous
+         * cluster during upgrade
+         */
+        if (conf->op_version < GD_OP_VERSION_3_7_6 &&
+            type == GF_QUOTA_OPTION_TYPE_ENABLE)
+                goto out;
+
         supported = _gf_true;
 
 out:
@@ -229,6 +238,7 @@ glusterd_quota_initiate_fs_crawl (glusterd_conf_t *priv, char *volname,
         char                       mountdir[]        = "/tmp/mntXXXXXX";
         char                       logfile[PATH_MAX] = {0,};
         runner_t                   runner            = {0};
+        char                       *volfileserver    = NULL;
 
         if (mkdtemp (mountdir) == NULL) {
                 gf_msg_debug ("glusterd", 0,
@@ -239,9 +249,13 @@ glusterd_quota_initiate_fs_crawl (glusterd_conf_t *priv, char *volname,
         snprintf (logfile, sizeof (logfile),
                   DEFAULT_LOG_FILE_DIRECTORY"/%s-quota-crawl.log", volname);
 
+        if (dict_get_str (THIS->options, "transport.socket.bind-address",
+                          &volfileserver) != 0)
+                volfileserver = "localhost";
+
         runinit (&runner);
         runner_add_args (&runner, SBIN_DIR"/glusterfs",
-                         "-s", "localhost",
+                         "-s", volfileserver,
                          "--volfile-id", volname,
 			 "--use-readdirp=no",
                          "--client-pid", QUOTA_CRAWL_PID,
@@ -764,7 +778,7 @@ glusterd_copy_to_tmp_file (int src_fd, int dst_fd)
         this = THIS;
         GF_ASSERT (this);
 
-        while ((bytes_read = read (src_fd, (void *)&buf, entry_sz)) > 0) {
+        while ((bytes_read = sys_read (src_fd, (void *)&buf, entry_sz)) > 0) {
                 if (bytes_read % 16 != 0) {
                         gf_msg (this->name, GF_LOG_ERROR, 0,
                                 GD_MSG_QUOTA_CONF_CORRUPT, "quota.conf "
@@ -772,7 +786,7 @@ glusterd_copy_to_tmp_file (int src_fd, int dst_fd)
                         ret = -1;
                         goto out;
                 }
-                ret = write (dst_fd, (void *) buf, bytes_read);
+                ret = sys_write (dst_fd, (void *) buf, bytes_read);
                 if (ret == -1) {
                         gf_msg (this->name, GF_LOG_ERROR, errno,
                                 GD_MSG_QUOTA_CONF_WRITE_FAIL,
@@ -834,7 +848,7 @@ glusterd_store_quota_conf_upgrade (glusterd_volinfo_t *volinfo)
 
 out:
         if (conf_fd != -1)
-                close (conf_fd);
+                sys_close (conf_fd);
 
         if (ret && (fd > 0)) {
                 gf_store_unlink_tmppath (volinfo->quota_conf_shandle);
@@ -906,7 +920,7 @@ glusterd_store_quota_config (glusterd_volinfo_t *volinfo, char *path,
 
         if (version < 1.2f && conf->op_version >= GD_OP_VERSION_3_7_0) {
                 /* Upgrade quota.conf file to newer format */
-                close (conf_fd);
+                sys_close (conf_fd);
                 ret = glusterd_store_quota_conf_upgrade(volinfo);
                 if (ret)
                         goto out;
@@ -959,7 +973,7 @@ glusterd_store_quota_config (glusterd_volinfo_t *volinfo, char *path,
                 type = GF_QUOTA_CONF_TYPE_USAGE;
 
         for (;;) {
-                bytes_read = read (conf_fd, (void *)&buf, sizeof (buf));
+                bytes_read = sys_read (conf_fd, (void *)&buf, sizeof (buf));
                 if (bytes_read <= 0) {
                         /*The flag @is_first_read is TRUE when the loop is
                          * entered, and is set to false if the first read
@@ -983,7 +997,7 @@ glusterd_store_quota_config (glusterd_volinfo_t *volinfo, char *path,
                 found = glusterd_find_gfid_match (gfid, type, buf, bytes_read,
                                                   opcode, &bytes_to_write);
 
-                ret = write (fd, (void *) buf, bytes_to_write);
+                ret = sys_write (fd, (void *) buf, bytes_to_write);
                 if (ret == -1) {
                         gf_msg (this->name, GF_LOG_ERROR, errno,
                                 GD_MSG_QUOTA_CONF_WRITE_FAIL,
@@ -1065,7 +1079,7 @@ glusterd_store_quota_config (glusterd_volinfo_t *volinfo, char *path,
         ret = 0;
 out:
         if (conf_fd != -1) {
-                close (conf_fd);
+                sys_close (conf_fd);
         }
 
         if (ret && (fd > 0)) {
@@ -1207,8 +1221,7 @@ glusterd_remove_quota_limit (char *volname, char *path, char **op_errstr,
         }
 
         if (type == GF_QUOTA_OPTION_TYPE_REMOVE) {
-                ret = sys_lremovexattr (abspath,
-                                        "trusted.glusterfs.quota.limit-set");
+                ret = sys_lremovexattr (abspath, QUOTA_LIMIT_KEY);
                 if (ret) {
                         gf_asprintf (op_errstr, "removexattr failed on %s. "
                                      "Reason : %s", abspath, strerror (errno));
@@ -1217,8 +1230,7 @@ glusterd_remove_quota_limit (char *volname, char *path, char **op_errstr,
         }
 
         if (type == GF_QUOTA_OPTION_TYPE_REMOVE_OBJECTS) {
-                ret = sys_lremovexattr (abspath,
-                                "trusted.glusterfs.quota.limit-objects");
+                ret = sys_lremovexattr (abspath, QUOTA_LIMIT_OBJECTS_KEY);
                 if (ret) {
                         gf_asprintf (op_errstr, "removexattr failed on %s. "
                                      "Reason : %s", abspath, strerror (errno));
@@ -1494,18 +1506,32 @@ glusterd_op_quota (dict_t *dict, char **op_errstr, dict_t *rsp_dict)
                         goto out;
         }
 
+
+        if (GF_QUOTA_OPTION_TYPE_ENABLE == type)
+                volinfo->quota_xattr_version++;
+        ret = glusterd_store_volinfo (volinfo,
+                                      GLUSTERD_VOLINFO_VER_AC_INCREMENT);
+        if (ret) {
+                if (GF_QUOTA_OPTION_TYPE_ENABLE == type)
+                        volinfo->quota_xattr_version--;
+                goto out;
+        }
+
         ret = glusterd_create_volfiles_and_notify_services (volinfo);
         if (ret) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         GD_MSG_VOLFILE_CREATE_FAIL, "Unable to re-create "
                                                   "volfiles");
+                if (GF_QUOTA_OPTION_TYPE_ENABLE == type) {
+                        /* rollback volinfo */
+                        volinfo->quota_xattr_version--;
+                        ret = glusterd_store_volinfo (volinfo,
+                                      GLUSTERD_VOLINFO_VER_AC_INCREMENT);
+                }
+
                 ret = -1;
                 goto out;
         }
-
-        ret = glusterd_store_volinfo (volinfo, GLUSTERD_VOLINFO_VER_AC_INCREMENT);
-        if (ret)
-                goto out;
 
         if (GLUSTERD_STATUS_STARTED == volinfo->status) {
                 if (priv->op_version == GD_OP_VERSION_MIN)
@@ -1674,6 +1700,94 @@ out:
         return ret;
 }
 
+static int
+glusterd_create_quota_auxiliary_mount (xlator_t *this, char *volname)
+{
+        int                ret                     = -1;
+        int                retry                   = 0;
+        char               mountdir[PATH_MAX]      = {0,};
+        char               pidfile_path[PATH_MAX]  = {0,};
+        char               logfile[PATH_MAX]       = {0,};
+        char               qpid[16]                = {0,};
+        char              *volfileserver           = NULL;
+        glusterd_conf_t   *priv                    = NULL;
+        struct stat        buf                     = {0,};
+
+        GF_VALIDATE_OR_GOTO ("glusterd", this, out);
+        priv = this->private;
+        GF_VALIDATE_OR_GOTO (this->name, priv, out);
+
+        GLUSTERFS_GET_AUX_MOUNT_PIDFILE (pidfile_path, volname);
+
+        if (gf_is_service_running (pidfile_path, NULL)) {
+                gf_msg_debug (this->name, 0, "Aux mount of volume %s is running"
+                              " already", volname);
+                ret = 0;
+                goto out;
+        }
+
+        if (glusterd_is_fuse_available () == _gf_false) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        GD_MSG_MOUNT_REQ_FAIL, "Fuse unavailable");
+                ret = -1;
+                goto out;
+        }
+
+        GLUSTERD_GET_QUOTA_AUX_MOUNT_PATH (mountdir, volname, "/");
+        ret = sys_mkdir (mountdir, 0777);
+        if (ret && errno != EEXIST) {
+                gf_msg (this->name, GF_LOG_ERROR, errno,
+                        GD_MSG_MOUNT_REQ_FAIL, "Failed to create auxiliary "
+                        "mount directory %s", mountdir);
+                goto out;
+        }
+        snprintf (logfile, PATH_MAX-1, "%s/quota-mount-%s.log",
+                  DEFAULT_LOG_FILE_DIRECTORY, volname);
+        snprintf(qpid, 15, "%d", GF_CLIENT_PID_QUOTA_MOUNT);
+
+        if (dict_get_str (this->options, "transport.socket.bind-address",
+                          &volfileserver) != 0)
+                volfileserver = "localhost";
+
+        synclock_unlock (&priv->big_lock);
+        ret = runcmd (SBIN_DIR"/glusterfs",
+                      "--volfile-server", volfileserver,
+                      "--volfile-id", volname,
+                      "-l", logfile,
+                      "-p", pidfile_path,
+                      "--client-pid", qpid,
+                      mountdir,
+                      NULL);
+        if (ret == 0) {
+                /* Block here till mount process is ready to accept FOPs.
+                 * Else, if glusterd acquires biglock below before
+                 * mount process is ready, then glusterd and mount process
+                 * can get into a deadlock situation.
+                 */
+                ret = sys_stat (mountdir, &buf);
+                if (ret < 0)
+                        ret = -errno;
+        } else {
+                ret = -errno;
+        }
+
+        synclock_lock (&priv->big_lock);
+
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, -ret,
+                        GD_MSG_MOUNT_REQ_FAIL, "Failed to mount glusterfs "
+                        "client. Please check the log file %s for more details",
+                        logfile);
+                ret = -1;
+                goto out;
+        }
+
+        ret = 0;
+
+out:
+        return ret;
+}
+
 int
 glusterd_op_stage_quota (dict_t *dict, char **op_errstr, dict_t *rsp_dict)
 {
@@ -1761,19 +1875,29 @@ glusterd_op_stage_quota (dict_t *dict, char **op_errstr, dict_t *rsp_dict)
         }
 
         switch (type) {
-        case GF_QUOTA_OPTION_TYPE_ENABLE:
-        case GF_QUOTA_OPTION_TYPE_ENABLE_OBJECTS:
         case GF_QUOTA_OPTION_TYPE_LIST:
         case GF_QUOTA_OPTION_TYPE_LIST_OBJECTS:
-                /* Fuse mount req. only for enable & list-usage options*/
-                if (is_origin_glusterd (dict) &&
-                    !glusterd_is_fuse_available ()) {
-                        *op_errstr = gf_strdup ("Fuse unavailable");
-                        ret = -1;
-                        goto out;
+        case GF_QUOTA_OPTION_TYPE_LIMIT_USAGE:
+        case GF_QUOTA_OPTION_TYPE_LIMIT_OBJECTS:
+        case GF_QUOTA_OPTION_TYPE_REMOVE:
+        case GF_QUOTA_OPTION_TYPE_REMOVE_OBJECTS:
+                /* Quota auxiliary mount is needed by CLI
+                 * for list command and need by glusterd for
+                 * setting/removing limit
+                 */
+                if (is_origin_glusterd (dict)) {
+                        ret = glusterd_create_quota_auxiliary_mount (this,
+                                                                     volname);
+                        if (ret) {
+                                *op_errstr = gf_strdup ("Failed to start aux "
+                                                        "mount");
+                                goto out;
+                        }
                 }
                 break;
+        }
 
+        switch (type) {
         case GF_QUOTA_OPTION_TYPE_LIMIT_USAGE:
                 ret = dict_get_str (dict, "hard-limit", &hard_limit_str);
                 if (ret) {
