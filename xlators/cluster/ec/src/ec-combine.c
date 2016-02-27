@@ -935,6 +935,12 @@ int32_t ec_combine_check(ec_cbk_data_t * dst, ec_cbk_data_t * src,
 {
     ec_fop_data_t * fop = dst->fop;
 
+	if(fop->id == GF_FOP_WRITE){
+		gf_msg_debug(fop->xl->name,0,"A pipelined cbk");
+		if((src->combined & dst->combined)!=0)
+			return 0;
+	}
+
     if (dst->op_ret != src->op_ret)
     {
         gf_msg_debug (fop->xl->name, 0, "Mismatching return code in "
@@ -986,7 +992,7 @@ void ec_combine (ec_cbk_data_t *newcbk, ec_combine_f combine)
 		static int called=0;
 
 		if(fop->id==GF_FOP_WRITE){
-				//printf("EC combine is called %d times by %d.\n",++called,fop->id);
+				printf("EC combine is called %d times by %d.\n",++called,fop->id);
 		}
 
 		fop->received |= newcbk->mask;
