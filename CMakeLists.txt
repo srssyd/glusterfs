@@ -1,7 +1,18 @@
 cmake_minimum_required(VERSION 3.3)
 project(glusterfs)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c99")
+
+
+include_directories(api/src/)
+include_directories(cli/src/)
+include_directories(libglusterfs/src/)
+include_directories(xlators/lib/src/)
+include_directories(contrib/uuid/)
+include_directories(heal/src/)
+include_directories(rpc/src/)
 
 set(SOURCE_FILES
     api/examples/glfsxmp.c
@@ -282,7 +293,6 @@ set(SOURCE_FILES
     libglusterfs/src/graph-print.c
     libglusterfs/src/graph-utils.h
     libglusterfs/src/graph.c
-    libglusterfs/src/graph.lex.c
     libglusterfs/src/hashfn.c
     libglusterfs/src/hashfn.h
     libglusterfs/src/iatt.h
@@ -343,8 +353,6 @@ set(SOURCE_FILES
     libglusterfs/src/upcall-utils.h
     libglusterfs/src/xlator.c
     libglusterfs/src/xlator.h
-    libglusterfs/src/y.tab.c
-    libglusterfs/src/y.tab.h
     rpc/rpc-lib/src/auth-glusterfs.c
     rpc/rpc-lib/src/auth-null.c
     rpc/rpc-lib/src/auth-unix.c
@@ -377,29 +385,9 @@ set(SOURCE_FILES
     rpc/rpc-transport/socket/src/socket-mem-types.h
     rpc/rpc-transport/socket/src/socket.c
     rpc/rpc-transport/socket/src/socket.h
-    rpc/xdr/src/acl3-xdr.c
-    rpc/xdr/src/acl3-xdr.h
-    rpc/xdr/src/changelog-xdr.c
-    rpc/xdr/src/changelog-xdr.h
-    rpc/xdr/src/cli1-xdr.c
-    rpc/xdr/src/cli1-xdr.h
-    rpc/xdr/src/glusterd1-xdr.c
-    rpc/xdr/src/glusterd1-xdr.h
-    rpc/xdr/src/glusterfs3-xdr.c
-    rpc/xdr/src/glusterfs3-xdr.h
     rpc/xdr/src/glusterfs3.h
-    rpc/xdr/src/mount3udp.c
-    rpc/xdr/src/mount3udp.h
     rpc/xdr/src/msg-nfs3.c
     rpc/xdr/src/msg-nfs3.h
-    rpc/xdr/src/nlm4-xdr.c
-    rpc/xdr/src/nlm4-xdr.h
-    rpc/xdr/src/nsm-xdr.c
-    rpc/xdr/src/nsm-xdr.h
-    rpc/xdr/src/portmap-xdr.c
-    rpc/xdr/src/portmap-xdr.h
-    rpc/xdr/src/rpc-common-xdr.c
-    rpc/xdr/src/rpc-common-xdr.h
     rpc/xdr/src/xdr-generic.c
     rpc/xdr/src/xdr-generic.h
     rpc/xdr/src/xdr-nfs3.c
@@ -504,7 +492,6 @@ set(SOURCE_FILES
     xlators/cluster/ec/src/ec-mem-types.h
     xlators/cluster/ec/src/ec-messages.h
     xlators/cluster/ec/src/ec-method-cuda.c
-    xlators/cluster/ec/src/ec-method-cuda.cu
     xlators/cluster/ec/src/ec-method.c
     xlators/cluster/ec/src/ec-method.h
     xlators/cluster/ec/src/ec.c
@@ -921,7 +908,6 @@ set(SOURCE_FILES
     xlators/system/posix-acl/src/posix-acl-xattr.c
     xlators/system/posix-acl/src/posix-acl-xattr.h
     xlators/system/posix-acl/src/posix-acl.c
-    xlators/system/posix-acl/src/posix-acl.h
-    config.h)
+    xlators/system/posix-acl/src/posix-acl.h)
 
 add_executable(glusterfs ${SOURCE_FILES})
