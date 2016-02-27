@@ -1279,6 +1279,8 @@ void ec_writev_start(ec_fop_data_t *fop)
     gid_t gid;
     int32_t err = -ENOMEM;
 
+    printf("Start writev with offset:%d\n",fop->offset);
+
     /* This shouldn't fail because we have the inode locked. */
     GF_ASSERT(ec_get_inode_size(fop, fop->fd->inode, &current));
 
@@ -1302,7 +1304,9 @@ void ec_writev_start(ec_fop_data_t *fop)
     }
 
     fop->user_size = iov_length(fop->vector, fop->int32);
+    //printf("Stripe %d, offset:%d\n",ec->stripe_size,fop->offset);
     fop->head = ec_adjust_offset(ec, &fop->offset, 0);
+    //printf("Finish adjust offset:%d\n",fop->offset);
     fop->size = ec_adjust_size(ec, fop->user_size + fop->head, 0);
 
     iobref = iobref_new();
@@ -1320,8 +1324,8 @@ void ec_writev_start(ec_fop_data_t *fop)
 
     ptr = iobuf->ptr + fop->head;
     if(0 && fop->int32==1 && fop->head==0){
-	printf("Oh noooooooooooooooooooooooooooooooooo!\n");
-	iobuf->ptr = fop->vector[0].iov_base;	
+	    printf("Oh noooooooooooooooooooooooooooooooooo!\n");
+	    iobuf->ptr = fop->vector[0].iov_base;
     }else{
     	ec_iov_copy_to(ptr, fop->vector, fop->int32, 0, fop->user_size);
     }
@@ -1352,6 +1356,8 @@ void ec_writev_start(ec_fop_data_t *fop)
     fop->frame->root->gid = gid;
 
     fd_unref(fd);
+
+    printf("Finish writev start with offset:%d\n",fop->offset);
 
     return;
 
@@ -1476,19 +1482,22 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
                 ec_iatt_rebuild(fop->xl->private, cbk->iatt, 2,
                         cbk->count);
 
-				printf("prepare answer:%d size_pre:%d size_after:%d\n",cbk->iatt[1].ia_blocks,cbk->iatt[0].ia_size,cbk->iatt[1].ia_size);
+				printf("Before adjust:blocks_pre:%d blocks_after:%d size_pre:%d size_after:%d\n",cbk->iatt[0].ia_blocks,cbk->iatt[1].ia_blocks,cbk->iatt[0].ia_size,cbk->iatt[1].ia_size);
                 /* This shouldn't fail because we have the inode locked. */
                 GF_ASSERT(ec_get_inode_size(fop, fop->fd->inode,
                                             &cbk->iatt[0].ia_size));
-				printf("After get:prepare answer:%d size_pre:%d size_after:%d\n",cbk->iatt[1].ia_blocks,cbk->iatt[0].ia_size,cbk->iatt[1].ia_size);
+				//printf("After get:prepare answer:%d size_pre:%d size_after:%d\n",cbk->iatt[1].ia_blocks,cbk->iatt[0].ia_size,cbk->iatt[1].ia_size);
 
                 cbk->iatt[1].ia_size = cbk->iatt[0].ia_size;
+
                 size = fop->offset + fop->head + fop->user_size;
+                printf("Total size:%d\n",size);
                 if (size > cbk->iatt[0].ia_size) {
                     /* Only update inode size if this is a top level fop.
                      * Otherwise this is an internal write and the top
                      * level fop should take care of the real inode size.
                      */
+
                     if (fop->parent == NULL) {
                         /* This shouldn't fail because we have the inode
                          * locked. */
@@ -1509,6 +1518,7 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
                         cbk->op_ret = fop->user_size;
                     }
                 }
+
             }
 
             return EC_STATE_REPORT;
@@ -1520,6 +1530,8 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
 
             if (fop->cbks.writev != NULL)
             {
+                printf("Final iatt :blocks_pre:%d blocks_after:%d size_pre:%d size_after:%d\n",cbk->iatt[0].ia_blocks,cbk->iatt[1].ia_blocks,cbk->iatt[0].ia_size,cbk->iatt[1].ia_size);
+                printf("Result returned: op_ret:%d op_errno:%d\n",cbk->op_ret,cbk->op_errno);
                 fop->cbks.writev(fop->req_frame, fop, fop->xl, cbk->op_ret,
                                  cbk->op_errno, &cbk->iatt[0], &cbk->iatt[1],
                                  cbk->xdata);
@@ -1763,6 +1775,7 @@ void ec_writev(call_frame_t * frame, xlator_t * this, uintptr_t target,
     }
 
     error = 0;
+    printf("A write request:%p %d.Offset:%d\n",vector[0].iov_base,vector[0].iov_len,offset);
 
 out:
     if (fop != NULL) {

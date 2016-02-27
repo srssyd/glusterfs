@@ -335,7 +335,7 @@ void ec_complete(ec_fop_data_t * fop)
 						new_cbk->iatt[0].ia_blocks = min(new_cbk->iatt[0].ia_blocks,cbk->iatt[0].ia_blocks);
 						new_cbk->iatt[1].ia_blocks = max(new_cbk->iatt[1].ia_blocks,cbk->iatt[1].ia_blocks);
 
-						printf("ia_size:%d %d.\nblock:%d %d\n",cbk->iatt[0].ia_size,cbk->iatt[1].ia_size,cbk->iatt[0].ia_blocks,cbk->iatt[1].ia_blocks);
+						//printf("ia_size:%d %d.\nblock:%d %d\n",cbk->iatt[0].ia_size,cbk->iatt[1].ia_size,cbk->iatt[0].ia_blocks,cbk->iatt[1].ia_blocks);
 					}
 					if(good_count < GET_REAL_PIPE_COUNT(fop)){
 						printf("An error occurs in one pipeline. Good:%d.\n",good_count);
@@ -589,7 +589,7 @@ void *ec_dispatch_batch_mask_single_thread(void * data){
 					fop->fd, vector, 1, (fop->offset+param->offset) / ec->fragments,
 					fop->uint32, iobref_batch[i], fop->xdata);
 
-				STACK_WIND_COOKIE(fop->frame,ec_fsync_cbk,(void *)(uintptr_t) idx,ec->xl_list[idx],ec->xl_list[idx]->fops->fsync,fop->fd,fop->int32,NULL);
+			STACK_WIND_COOKIE(fop->frame,ec_fsync_cbk,(void *)(uintptr_t) idx,ec->xl_list[idx],ec->xl_list[idx]->fops->fsync,fop->fd,fop->int32,NULL);
 			i++;
 		}
 		idx++;
@@ -600,6 +600,7 @@ void *ec_dispatch_batch_mask_single_thread(void * data){
 
 void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 {
+
 	int32_t i,t;
 	ec_t * ec = fop->xl->private;
 	xlator_t *this = ec->xl;
@@ -626,15 +627,15 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 	int block_size = EC_METHOD_CHUNK_SIZE * ec->fragments;
 	int block_count = (size + block_size -1 )/block_size;
 
-	int write_count = block_count<pipe_count?block_count:pipe_count;
 
 	LOCK(&fop->lock);
 
 	ec_trace("EXECUTE", fop, "mask=%lX", mask);
+	printf("A dispathced write with offset:%d\n",fop->offset);
 
 	fop->remaining ^= mask;
 
-
+	//Modified by syd.
 	fop->winds += 1 * count * pipe_count;
 	fop->refs += 2 * count * pipe_count;
 
@@ -653,8 +654,8 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 			if (iobref_batch[t*count+i] == NULL) {
 				goto out;
 			}
-			size = min(fop->vector[0].iov_len-total,(block_count/pipe_count + (t<(block_count%pipe_count))) * block_size); 
-			//Bug may exist here. What if size can't be divided by ec->fragments?
+			size = min(fop->vector[0].iov_len-total,(block_count/pipe_count + (t<(block_count%pipe_count))) * block_size);
+
 			bufsize = size / ec->fragments;
 			iobuf_batch[t*count+i] = iobuf_get2(fop->xl->ctx->iobuf_pool, bufsize);
 			if (iobuf_batch[t*count+i] == NULL) {
@@ -696,9 +697,9 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 		param.lock=&lock;
 		params[t]=param;
 
-		ec_dispatch_batch_mask_single_thread(&params[t]);
+		//ec_dispatch_batch_mask_single_thread(&params[t]);
 		//gettimeofday(&time,NULL);
-		//thpool_add_work(thpool,ec_dispatch_batch_mask_single_thread,(void *)&params[t]);
+		thpool_add_work(thpool,ec_dispatch_batch_mask_single_thread,(void *)&params[t]);
 		//gettimeofday(&time,NULL);
 
 		total += size;
@@ -710,7 +711,6 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 	gettimeofday(&time,NULL);
 	printf("Finish waiting for the finish of thpool,timestamp %u.%u.\n",time.tv_sec,time.tv_usec);
 
-	printf("end of thpool ||||||File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );	
 	free(params);
 
 	for(i=0;i<pipe_count * count;i++) {
@@ -723,7 +723,7 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 			iobref_unref(iobref_batch[i]);
 		}
 	}
-	printf("End of this funtion ||||||File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
+	printf("End of this writev. File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
 	return ;
 out:
 	for(i=0;i<pipe_count * count;i++) {
@@ -736,10 +736,10 @@ out:
 			iobref_unref(iobref_batch[i]);
 		}
 	}
-	printf("Start at ec_writev ||||||File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
+	//printf("Start at ec_writev_cbk : File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
 	ec_writev_cbk(fop->frame, (void *)(uintptr_t)idx, fop->xl, -1, -err, NULL,
 			NULL, NULL);
-	printf("End at ec_writev ||||||File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
+	//printf("End at ec_writev_cbk : File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
 }
 
 void ec_dispatch_start(ec_fop_data_t * fop)

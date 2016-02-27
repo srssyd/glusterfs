@@ -20,7 +20,7 @@ typedef enum {
         EC_METADATA_TXN
 } ec_txn_t;
 
-#define PIPE_COUNT  1
+#define PIPE_COUNT  8
 #define EC_FOP_HEAL     -1
 #define EC_FOP_FHEAL    -2
 

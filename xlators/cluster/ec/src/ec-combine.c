@@ -979,7 +979,7 @@ void ec_combine (ec_cbk_data_t *newcbk, ec_combine_f combine)
 		static int called=0;
 
 		if(fop->id==GF_FOP_WRITE){
-				printf("A ec combine is called %d times.\n",++called);
+				//printf("EC combine is called %d times by %d.\n",++called,fop->id);
 		}
 
 		fop->received |= newcbk->mask;
@@ -995,11 +995,11 @@ void ec_combine (ec_cbk_data_t *newcbk, ec_combine_f combine)
 						newcbk->mask |= cbk->mask;
 						if(fop->id==GF_FOP_WRITE){
 							newcbk->combined |= cbk->combined;
-							//newcbk->iatt[0].ia_size = min(newcbk->iatt[0].ia_size,cbk->iatt[0].ia_size);
-							//newcbk->iatt[1].ia_size = max(newcbk->iatt[1].ia_size,cbk->iatt[1].ia_size);
+							newcbk->iatt[0].ia_size = min(newcbk->iatt[0].ia_size,cbk->iatt[0].ia_size);
+							newcbk->iatt[1].ia_size = max(newcbk->iatt[1].ia_size,cbk->iatt[1].ia_size);
 							//The logic of block control is wrong.
-							//newcbk->iatt[0].ia_blocks = min(newcbk->iatt[0].ia_blocks,cbk->iatt[0].ia_blocks);
-							//newcbk->iatt[1].ia_blocks = max(newcbk->iatt[1].ia_blocks,cbk->iatt[1].ia_blocks);
+							newcbk->iatt[0].ia_blocks = min(newcbk->iatt[0].ia_blocks,cbk->iatt[0].ia_blocks);
+							newcbk->iatt[1].ia_blocks = max(newcbk->iatt[1].ia_blocks,cbk->iatt[1].ia_blocks);
 						}
 
 						item = cbk->list.prev;

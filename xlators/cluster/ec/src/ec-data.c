@@ -40,9 +40,7 @@ ec_cbk_data_t * ec_cbk_data_allocate(call_frame_t * frame, xlator_t * this,
         return NULL;
     }
      
-    if(fop->id == 13 && id==16){
-		return NULL;
-    }
+
     if (fop->id != id)
     {
         gf_msg (this->name, GF_LOG_ERROR, EINVAL,
@@ -267,6 +265,7 @@ void ec_fop_data_release(ec_fop_data_t * fop)
     GF_ASSERT (fop->refs > 0);
     refs = --fop->refs;
 
+    //printf("ref:%d called by:%d \n",fop->refs,fop->id);
     UNLOCK(&fop->lock);
 
     if (refs == 0)
