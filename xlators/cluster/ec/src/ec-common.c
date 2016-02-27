@@ -9,6 +9,7 @@
 */
 
 #include "byte-order.h"
+#include "hashfn.h"
 
 #include "ec-mem-types.h"
 #include "ec-data.h"
@@ -24,6 +25,25 @@
 #include "xlator.h"
 #include "defaults.h"
 
+
+uint32_t
+ec_select_first_by_read_policy (ec_t *ec, ec_fop_data_t *fop)
+{
+        if (ec->read_policy == EC_ROUND_ROBIN) {
+                return ec->idx;
+        } else if (ec->read_policy == EC_GFID_HASH) {
+                if (fop->use_fd) {
+                        return SuperFastHash((char *)fop->fd->inode->gfid,
+                                   sizeof(fop->fd->inode->gfid)) % ec->nodes;
+                } else {
+                        if (gf_uuid_is_null (fop->loc[0].gfid))
+                                loc_gfid (&fop->loc[0], fop->loc[0].gfid);
+                        return SuperFastHash((char *)fop->loc[0].gfid,
+                                   sizeof(fop->loc[0].gfid)) % ec->nodes;
+                }
+        }
+        return 0;
+}
 
 int32_t ec_child_valid(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
 {
@@ -139,11 +159,12 @@ void ec_lock_update_good(ec_lock_t *lock, ec_fop_data_t *fop)
         return;
     }
 
-    /* When updating the good mask of the lock, we only take into
-     * consideration those bits corresponding to the bricks where
-     * the fop has been executed. */
-    lock->good_mask &= ~fop->mask | fop->remaining;
-    lock->good_mask |= fop->good;
+    /* When updating the good mask of the lock, we only take into consideration
+     * those bits corresponding to the bricks where the fop has been executed.
+     * Bad bricks are removed from good_mask, but once marked as bad it's never
+     * set to good until the lock is released and reacquired */
+
+    lock->good_mask &= fop->good | fop->remaining;
 }
 
 void __ec_fop_set_error(ec_fop_data_t * fop, int32_t error)
@@ -420,12 +441,13 @@ int32_t ec_child_select(ec_fop_data_t * fop)
             fop->minimum = 1;
     }
 
-    first = ec->idx;
-    if (++first >= ec->nodes)
-    {
-        first = 0;
+    if (ec->read_policy == EC_ROUND_ROBIN) {
+            first = ec->idx;
+            if (++first >= ec->nodes) {
+                first = 0;
+            }
+            ec->idx = first;
     }
-    ec->idx = first;
 
     /*Unconditionally wind on healing subvolumes*/
     fop->mask |= fop->healing;
@@ -636,14 +658,12 @@ void ec_dispatch_start(ec_fop_data_t * fop)
 
 void ec_dispatch_one(ec_fop_data_t * fop)
 {
-    ec_t * ec = fop->xl->private;
-
     ec_dispatch_start(fop);
 
     if (ec_child_select(fop))
     {
         fop->expected = 1;
-        fop->first = ec->idx;
+        fop->first = ec_select_first_by_read_policy (fop->xl->private, fop);
 
         ec_dispatch_next(fop, fop->first);
     }
@@ -721,7 +741,7 @@ void ec_dispatch_min(ec_fop_data_t * fop)
     if (ec_child_select(fop))
     {
         fop->expected = count = ec->fragments;
-        fop->first = ec->idx;
+        fop->first = ec_select_first_by_read_policy (fop->xl->private, fop);
         idx = fop->first - 1;
         mask = 0;
         while (count-- > 0)
@@ -1018,11 +1038,11 @@ ec_prepare_update_cbk (call_frame_t *frame, void *cookie,
 
     LOCK(&lock->loc.inode->lock);
 
-    list_for_each_entry(tmp, &lock->owners, owner_list) {
-        if ((tmp->flags & EC_FLAG_WAITING_SIZE) != 0) {
-            tmp->flags ^= EC_FLAG_WAITING_SIZE;
+    list_for_each_entry(link, &lock->owners, owner_list) {
+        if ((link->fop->flags & EC_FLAG_WAITING_SIZE) != 0) {
+            link->fop->flags ^= EC_FLAG_WAITING_SIZE;
 
-            list_add_tail(&tmp->cbk_list, &list);
+            list_add_tail(&link->fop->cbk_list, &list);
         }
     }
 
@@ -1048,37 +1068,45 @@ ec_prepare_update_cbk (call_frame_t *frame, void *cookie,
 
     ctx->have_version = _gf_true;
 
-    if (lock->loc.inode->ia_type == IA_IFREG) {
+    if (lock->loc.inode->ia_type == IA_IFREG ||
+        lock->loc.inode->ia_type == IA_INVAL) {
         op_errno = -ec_dict_del_number(dict, EC_XATTR_SIZE, &ctx->pre_size);
         if (op_errno != 0) {
-            gf_msg (this->name, GF_LOG_ERROR, op_errno,
-                    EC_MSG_SIZE_XATTR_GET_FAIL, "Unable to get size xattr");
+            if (lock->loc.inode->ia_type == IA_IFREG) {
+                gf_msg (this->name, GF_LOG_ERROR, op_errno,
+                        EC_MSG_SIZE_XATTR_GET_FAIL,
+                        "Unable to get size xattr");
 
-            goto unlock;
+                goto unlock;
+            }
+        } else {
+            ctx->post_size = ctx->pre_size;
+
+            ctx->have_size = _gf_true;
         }
-        ctx->post_size = ctx->pre_size;
-
-        ctx->have_size = _gf_true;
 
         op_errno = -ec_dict_del_config(dict, EC_XATTR_CONFIG, &ctx->config);
         if (op_errno != 0) {
-            gf_msg (this->name, GF_LOG_ERROR, op_errno,
-                    EC_MSG_CONFIG_XATTR_GET_FAIL,
-                    "Unable to get config xattr");
+            if (lock->loc.inode->ia_type == IA_IFREG) {
+                gf_msg (this->name, GF_LOG_ERROR, op_errno,
+                        EC_MSG_CONFIG_XATTR_GET_FAIL,
+                        "Unable to get config xattr");
 
-            goto unlock;
+                goto unlock;
+            }
+        } else {
+            if (!ec_config_check(parent, &ctx->config)) {
+                gf_msg (this->name, GF_LOG_ERROR, EINVAL,
+                        EC_MSG_CONFIG_XATTR_INVALID,
+                        "Invalid config xattr");
+
+                op_errno = EINVAL;
+
+                goto unlock;
+            }
+
+            ctx->have_config = _gf_true;
         }
-        if (!ec_config_check(parent, &ctx->config)) {
-            gf_msg (this->name, GF_LOG_ERROR, EINVAL,
-                    EC_MSG_CONFIG_XATTR_INVALID,
-                    "Invalid config xattr");
-
-            op_errno = EINVAL;
-
-            goto unlock;
-        }
-
-        ctx->have_config = _gf_true;
     }
 
     ctx->have_info = _gf_true;
@@ -1094,6 +1122,7 @@ unlock:
         /* We don't allow the main fop to be executed on bricks that have not
          * succeeded the initial xattrop. */
         parent->mask &= fop->good;
+        ec_lock_update_good (lock, fop);
 
         /*As of now only data healing marks bricks as healing*/
         lock->healing |= fop->healing;
@@ -1132,8 +1161,6 @@ void ec_get_size_version(ec_lock_link_t *link)
     ec_inode_t *ctx;
     ec_fop_data_t *fop;
     dict_t *dict = NULL;
-    uid_t uid;
-    gid_t gid;
     int32_t error = -ENOMEM;
     gf_boolean_t getting_size;
     uint64_t allzero[EC_VERSION_SIZE] = {0, 0};
@@ -1152,12 +1179,11 @@ void ec_get_size_version(ec_lock_link_t *link)
 
     /* Determine if there's something we need to retrieve for the current
      * operation. */
-    if (!lock->query && (lock->loc.inode->ia_type != IA_IFREG)) {
+    if (!lock->query &&
+        (lock->loc.inode->ia_type != IA_IFREG) &&
+        (lock->loc.inode->ia_type != IA_INVAL)) {
         return;
     }
-
-    uid = fop->frame->root->uid;
-    gid = fop->frame->root->gid;
 
     memset(&loc, 0, sizeof(loc));
 
@@ -1196,7 +1222,8 @@ void ec_get_size_version(ec_lock_link_t *link)
         goto out;
     }
 
-    if (lock->loc.inode->ia_type == IA_IFREG) {
+    if (lock->loc.inode->ia_type == IA_IFREG ||
+        lock->loc.inode->ia_type == IA_INVAL) {
         error = ec_dict_set_number(dict, EC_XATTR_SIZE, 0);
         if (error == 0) {
             error = ec_dict_set_number(dict, EC_XATTR_CONFIG, 0);
@@ -1243,8 +1270,8 @@ void ec_get_size_version(ec_lock_link_t *link)
     error = 0;
 
 out:
-    fop->frame->root->uid = uid;
-    fop->frame->root->gid = gid;
+    fop->frame->root->uid = fop->uid;
+    fop->frame->root->gid = fop->gid;
 
     loc_wipe(&loc);
 
@@ -1450,7 +1477,7 @@ ec_lock_wake_shared(ec_lock_t *lock, struct list_head *list)
 
         list_move_tail(&link->wait_list, list);
 
-        list_add_tail(&fop->owner_list, &lock->owners);
+        list_add_tail(&link->owner_list, &lock->owners);
 
         ec_lock_update_fd(lock, fop);
     }
@@ -1636,7 +1663,7 @@ ec_lock_assign_owner(ec_lock_link_t *link)
         }
     }
 
-    list_add_tail(&fop->owner_list, &lock->owners);
+    list_add_tail(&link->owner_list, &lock->owners);
 
     assigned = _gf_true;
 
@@ -1670,8 +1697,8 @@ ec_lock_next_owner(ec_lock_link_t *link, ec_cbk_data_t *cbk,
 
     ec_trace("LOCK_DONE", fop, "lock=%p", lock);
 
-    GF_ASSERT(!list_empty(&fop->owner_list));
-    list_del_init(&fop->owner_list);
+    GF_ASSERT(!list_empty(&link->owner_list));
+    list_del_init(&link->owner_list);
     lock->release |= release;
 
     if ((fop->error == 0) && (cbk != NULL) && (cbk->op_ret >= 0)) {
@@ -1870,8 +1897,6 @@ ec_update_size_version(ec_lock_link_t *link, uint64_t *version,
     ec_lock_t *lock;
     ec_inode_t *ctx;
     dict_t * dict;
-    uid_t uid;
-    gid_t gid;
     int32_t err = -ENOMEM;
 
     fop = link->fop;
@@ -1927,24 +1952,21 @@ ec_update_size_version(ec_lock_link_t *link, uint64_t *version,
         ec_dict_set_number(dict, EC_XATTR_CONFIG, 0);
     }
 
-    uid = fop->frame->root->uid;
-    gid = fop->frame->root->gid;
-
     fop->frame->root->uid = 0;
     fop->frame->root->gid = 0;
 
     if (link->lock->fd == NULL) {
-            ec_xattrop(fop->frame, fop->xl, fop->good, EC_MINIMUM_MIN,
+            ec_xattrop(fop->frame, fop->xl, lock->good_mask, EC_MINIMUM_MIN,
                        ec_update_size_version_done, link, &link->lock->loc,
                        GF_XATTROP_ADD_ARRAY64, dict, NULL);
     } else {
-            ec_fxattrop(fop->frame, fop->xl, fop->good, EC_MINIMUM_MIN,
+            ec_fxattrop(fop->frame, fop->xl, lock->good_mask, EC_MINIMUM_MIN,
                        ec_update_size_version_done, link, link->lock->fd,
                        GF_XATTROP_ADD_ARRAY64, dict, NULL);
     }
 
-    fop->frame->root->uid = uid;
-    fop->frame->root->gid = gid;
+    fop->frame->root->uid = fop->uid;
+    fop->frame->root->gid = fop->gid;
 
     dict_unref(dict);
 
@@ -2137,14 +2159,6 @@ void ec_unlock(ec_fop_data_t *fop)
 void ec_flush_size_version(ec_fop_data_t * fop)
 {
     GF_ASSERT(fop->lock_count == 1);
-
-    /* In normal circumstances, ec_update_info() is called after having
-     * executed a normal fop, and it uses fop->good to update only those bricks
-     * that succeeded. In this case we haven't executed any fop, so fop->good
-     * is 0. We use the current good mask of the lock itself to send the
-     * updates.*/
-    fop->good = fop->locks[0].lock->good_mask;
-
     ec_update_info(&fop->locks[0]);
 }
 

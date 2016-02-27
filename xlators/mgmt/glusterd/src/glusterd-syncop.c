@@ -215,6 +215,8 @@ out:
         iobref_unref (iobref);
         iobuf_unref (iobuf);
 
+        if (ret && frame)
+                STACK_DESTROY (frame->root);
         return ret;
 }
 
@@ -304,6 +306,9 @@ glusterd_syncop_aggr_rsp_dict (glusterd_op_t op, dict_t *aggr, dict_t *rsp)
                         goto out;
         break;
 
+        case GD_OP_SCRUB_STATUS:
+                ret = glusterd_volume_bitrot_scrub_use_rsp_dict (aggr, rsp);
+        break;
         default:
         break;
         }
@@ -408,6 +413,7 @@ gd_syncop_mgmt_v3_lock (glusterd_op_t op, dict_t *op_ctx,
                                         (xdrproc_t)
                                         xdr_gd1_mgmt_v3_lock_req);
 out:
+        GF_FREE (req.dict.dict_val);
         gf_msg_debug ("glusterd", 0, "Returning %d", ret);
         return ret;
 }
@@ -507,6 +513,7 @@ gd_syncop_mgmt_v3_unlock (dict_t *op_ctx, glusterd_peerinfo_t *peerinfo,
                                         (xdrproc_t)
                                         xdr_gd1_mgmt_v3_unlock_req);
 out:
+        GF_FREE (req.dict.dict_val);
         gf_msg_debug ("glusterd", 0, "Returning %d", ret);
         return ret;
 }
@@ -932,7 +939,7 @@ gd_syncop_mgmt_brick_op (struct rpc_clnt *rpc, glusterd_pending_node_t *pnode,
         args.op_errno = ENOTCONN;
 
         if ((pnode->type == GD_NODE_NFS) ||
-            (pnode->type == GD_NODE_QUOTAD) ||
+            (pnode->type == GD_NODE_QUOTAD) || (pnode->type == GD_NODE_SCRUB) ||
             ((pnode->type == GD_NODE_SHD) && (op == GD_OP_STATUS_VOLUME))) {
                 ret = glusterd_node_op_build_payload (op, &req, dict_out);
 
@@ -1717,7 +1724,7 @@ gd_sync_task_begin (dict_t *op_ctx, rpcsvc_request_t * req)
         int                         op_ret           = -1;
         dict_t                      *req_dict        = NULL;
         glusterd_conf_t             *conf            = NULL;
-        glusterd_op_t               op               = 0;
+        glusterd_op_t               op               = GD_OP_NONE;
         int32_t                     tmp_op           = 0;
         char                        *op_errstr       = NULL;
         char                        *tmp             = NULL;

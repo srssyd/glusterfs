@@ -11,7 +11,6 @@
 
 /*
   TODO:
-  - merge locks in glfs_posix_lock for lock self-healing
   - set proper pid/lk_owner to call frames (currently buried in syncop)
   - fix logging.c/h to store logfp and loglevel in glusterfs_ctx_t and
     reach it via THIS.
@@ -351,9 +350,12 @@ pub_glfs_unset_volfile_server (struct glfs *fs, const char *transport,
 {
         cmd_args_t       *cmd_args = NULL;
         server_cmdline_t *server = NULL;
+        server_cmdline_t *tmp = NULL;
+        char             *transport_val = NULL;
+        int               port_val = 0;
         int               ret = -1;
 
-        if (!transport || !host || !port) {
+        if (!fs || !host) {
                 errno = EINVAL;
                 return ret;
         }
@@ -362,10 +364,30 @@ pub_glfs_unset_volfile_server (struct glfs *fs, const char *transport,
         __GLFS_ENTRY_VALIDATE_FS (fs, invalid_fs);
 
         cmd_args = &fs->ctx->cmd_args;
-        list_for_each_entry(server, &cmd_args->curr_server->list, list) {
+
+        if (transport) {
+                transport_val = gf_strdup (transport);
+        } else {
+                transport_val = gf_strdup (GF_DEFAULT_VOLFILE_TRANSPORT);
+        }
+
+        if (!transport_val) {
+                errno = ENOMEM;
+                goto out;
+        }
+
+        if (port) {
+                port_val = port;
+        } else {
+                port_val = GF_DEFAULT_BASE_PORT;
+        }
+
+        list_for_each_entry_safe (server, tmp,
+                                  &cmd_args->curr_server->list,
+                                  list) {
                 if ((!strcmp(server->volfile_server, host) &&
-                     !strcmp(server->transport, transport) &&
-                     (server->port == port))) {
+                     !strcmp(server->transport, transport_val) &&
+                     (server->port == port_val))) {
                         list_del (&server->list);
                         ret = 0;
                         goto out;
@@ -373,6 +395,7 @@ pub_glfs_unset_volfile_server (struct glfs *fs, const char *transport,
         }
 
 out:
+        GF_FREE (transport_val);
         __GLFS_EXIT_FS;
 
 invalid_fs:
@@ -421,13 +444,20 @@ pub_glfs_set_volfile_server (struct glfs *fs, const char *transport,
 
         if (transport) {
                 server->transport = gf_strdup (transport);
-                if (!server->transport) {
-                        errno = ENOMEM;
-                        goto out;
-                }
+        } else {
+                server->transport = gf_strdup (GF_DEFAULT_VOLFILE_TRANSPORT);
         }
 
-        server->port = port;
+        if (!server->transport) {
+                errno = ENOMEM;
+                goto out;
+        }
+
+        if (port) {
+                server->port = port;
+        } else {
+                server->port = GF_DEFAULT_BASE_PORT;
+        }
 
         if (!cmd_args->volfile_server) {
                 cmd_args->volfile_server = server->volfile_server;
@@ -437,9 +467,9 @@ pub_glfs_set_volfile_server (struct glfs *fs, const char *transport,
         }
 
         list_for_each_entry(tmp, &cmd_args->volfile_servers, list) {
-                if ((!strcmp(tmp->volfile_server, host) &&
-                     !strcmp(tmp->transport, transport) &&
-                     (tmp->port == port))) {
+                if ((!strcmp(tmp->volfile_server, server->volfile_server) &&
+                     !strcmp(tmp->transport, server->transport) &&
+                     (tmp->port == server->port))) {
                         errno = EEXIST;
                         ret = -1;
                         goto out;
@@ -511,6 +541,32 @@ pub_glfs_from_glfd (struct glfs_fd *glfd)
 
 GFAPI_SYMVER_PUBLIC_DEFAULT(glfs_from_glfd, 3.4.0);
 
+void
+glfs_fd_destroy (void *data)
+{
+        struct glfs_fd  *glfd = NULL;
+
+        if (!data)
+                return;
+
+        glfd = (struct glfs_fd *)data;
+
+        glfs_lock (glfd->fs);
+        {
+                list_del_init (&glfd->openfds);
+        }
+        glfs_unlock (glfd->fs);
+
+        if (glfd->fd) {
+                fd_unref (glfd->fd);
+                glfd->fd = NULL;
+        }
+
+        GF_FREE (glfd->readdirbuf);
+
+        GF_FREE (glfd);
+}
+
 
 struct glfs_fd *
 glfs_fd_new (struct glfs *fs)
@@ -524,6 +580,8 @@ glfs_fd_new (struct glfs *fs)
 	glfd->fs = fs;
 
 	INIT_LIST_HEAD (&glfd->openfds);
+
+        GF_REF_INIT (glfd, glfs_fd_destroy);
 
 	return glfd;
 }
@@ -541,28 +599,6 @@ glfs_fd_bind (struct glfs_fd *glfd)
 		list_add_tail (&glfd->openfds, &fs->openfds);
 	}
 	glfs_unlock (fs);
-}
-
-void
-glfs_fd_destroy (struct glfs_fd *glfd)
-{
-	if (!glfd)
-		return;
-
-	glfs_lock (glfd->fs);
-	{
-		list_del_init (&glfd->openfds);
-	}
-	glfs_unlock (glfd->fs);
-
-        if (glfd->fd) {
-                fd_unref (glfd->fd);
-                glfd->fd = NULL;
-        }
-
-	GF_FREE (glfd->readdirbuf);
-
-	GF_FREE (glfd);
 }
 
 
@@ -1197,7 +1233,7 @@ invalid_fs:
 GFAPI_SYMVER_PUBLIC_DEFAULT(glfs_get_volfile, 3.6.0);
 
 int
-pub_glfs_ipc (struct glfs *fs, int opcode)
+pub_glfs_ipc_xd (struct glfs *fs, int opcode, dict_t *xd_in, dict_t **xd_out)
 {
 	xlator_t        *subvol = NULL;
         int             ret = -1;
@@ -1212,7 +1248,7 @@ pub_glfs_ipc (struct glfs *fs, int opcode)
 		goto out;
 	}
 
-	ret = syncop_ipc (subvol, opcode, NULL, NULL);
+	ret = syncop_ipc (subvol, opcode, xd_in, xd_out);
         DECODE_SYNCOP_ERR (ret);
 
 out:
@@ -1221,6 +1257,14 @@ out:
 
 invalid_fs:
         return ret;
+}
+
+GFAPI_SYMVER_PUBLIC_DEFAULT(glfs_ipc_xd, 4.0.0);
+
+int
+pub_glfs_ipc (struct glfs *fs, int opcode)
+{
+        return pub_glfs_ipc_xd (fs, opcode, NULL, NULL);
 }
 
 GFAPI_SYMVER_PUBLIC_DEFAULT(glfs_ipc, 3.7.0);

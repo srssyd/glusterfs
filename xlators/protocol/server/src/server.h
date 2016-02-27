@@ -68,6 +68,10 @@ struct server_conf {
                                                 * configured */
 
         gf_boolean_t            parent_up;
+        gf_boolean_t            dync_auth; /* if set authenticate dynamically,
+                                            * in case if volume set options
+                                            * (say *.allow | *.reject) are
+                                            * tweeked */
 };
 typedef struct server_conf server_conf_t;
 
@@ -147,6 +151,7 @@ struct _server_state {
         struct gf_flock   flock;
         const char       *volume;
         dir_entry_t      *entry;
+        gf_seek_what_t    what;
 
         dict_t           *xdata;
         mode_t            umask;

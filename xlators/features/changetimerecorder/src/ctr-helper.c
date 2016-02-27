@@ -120,8 +120,15 @@ fill_db_record_for_wind (xlator_t               *this,
                 memset(ctr_wtime, 0, sizeof(*ctr_wtime));
         }
 
-        /*Copy gfid into db record*/
+        /* Copy gfid into db record */
         gf_uuid_copy (CTR_DB_REC(ctr_local).gfid, *(ctr_inode_cx->gfid));
+
+        /* Copy older gfid if any */
+        if (ctr_inode_cx->old_gfid &&
+                (!gf_uuid_is_null (*(ctr_inode_cx->old_gfid)))) {
+                gf_uuid_copy (CTR_DB_REC(ctr_local).old_gfid,
+                                *(ctr_inode_cx->old_gfid));
+        }
 
         /*Hard Links*/
         if (isdentryfop(ctr_inode_cx->fop_type)) {
@@ -131,8 +138,6 @@ fill_db_record_for_wind (xlator_t               *this,
                                 *((NEW_LINK_CX(ctr_inode_cx))->pargfid));
                         strcpy (CTR_DB_REC(ctr_local).file_name,
                                 NEW_LINK_CX(ctr_inode_cx)->basename);
-                        strcpy (CTR_DB_REC(ctr_local).file_path,
-                                NEW_LINK_CX(ctr_inode_cx)->basepath);
                 }
                 /*rename fop*/
                 if (OLD_LINK_CX(ctr_inode_cx)) {
@@ -140,8 +145,6 @@ fill_db_record_for_wind (xlator_t               *this,
                                 *((OLD_LINK_CX(ctr_inode_cx))->pargfid));
                         strcpy (CTR_DB_REC(ctr_local).old_file_name,
                                 OLD_LINK_CX(ctr_inode_cx)->basename);
-                        strcpy (CTR_DB_REC(ctr_local).old_path,
-                                OLD_LINK_CX(ctr_inode_cx)->basepath);
                 }
         }
 
@@ -272,18 +275,23 @@ int extract_ctr_options (xlator_t *this, gf_ctr_private_t *_priv) {
         GF_OPTION_INIT ("record-counters", _priv->ctr_record_counter, bool,
                         out);
 
+        /* Extract flag for record metadata heat */
+        GF_OPTION_INIT ("ctr-record-metadata-heat",
+                        _priv->ctr_record_metadata_heat, bool,
+                        out);
+
         /*Extract flag for link consistency*/
         GF_OPTION_INIT ("ctr_link_consistency", _priv->ctr_link_consistency,
                         bool, out);
 
-        /*Extract ctr_inode_heal_expire_period */
-        GF_OPTION_INIT ("ctr_inode_heal_expire_period",
-                        _priv->ctr_inode_heal_expire_period,
+        /*Extract ctr_lookupheal_inode_timeout */
+        GF_OPTION_INIT ("ctr_lookupheal_inode_timeout",
+                        _priv->ctr_lookupheal_inode_timeout,
                         uint64, out);
 
-        /*Extract ctr_hardlink_heal_expire_period*/
-        GF_OPTION_INIT ("ctr_hardlink_heal_expire_period",
-                        _priv->ctr_hardlink_heal_expire_period,
+        /*Extract ctr_lookupheal_link_timeout*/
+        GF_OPTION_INIT ("ctr_lookupheal_link_timeout",
+                        _priv->ctr_lookupheal_link_timeout,
                         uint64, out);
 
         /*Extract flag for hot tier brick*/

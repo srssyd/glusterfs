@@ -14,6 +14,9 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#define LOOKUP_NEEDED 1
+#define LOOKUP_NOT_NEEDED 2
+
 #define DEFAULT_INODE_MEMPOOL_ENTRIES   32 * 1024
 #define INODE_PATH_FMT "<gfid:%s>"
 struct _inode_table;
@@ -93,7 +96,7 @@ struct _inode {
         struct list_head     hash;          /* hash table pointers */
         struct list_head     list;          /* active/lru/purge */
 
-	struct _inode_ctx   *_ctx;    /* replacement for dict_t *(inode->ctx) */
+        struct _inode_ctx   *_ctx;    /* replacement for dict_t *(inode->ctx) */
 };
 
 

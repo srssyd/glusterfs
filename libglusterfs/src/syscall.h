@@ -11,6 +11,10 @@
 #ifndef __SYSCALL_H__
 #define __SYSCALL_H__
 
+#include <dirent.h>
+#include <sys/uio.h>
+#include <sys/statvfs.h>
+
 /* GF follows the Linux XATTR definition, which differs in Darwin. */
 #define GF_XATTR_CREATE  0x1 /* set value, fail if attr already exists */
 #define GF_XATTR_REPLACE 0x2 /* set value, fail if attr does not exist */
@@ -188,6 +192,19 @@ sys_access (const char *pathname, int mode);
 int
 sys_ftruncate (int fd, off_t length);
 
-int sys_fallocate(int fd, int mode, off_t offset, off_t len);
+int
+sys_fallocate(int fd, int mode, off_t offset, off_t len);
+
+ssize_t
+sys_preadv (int fd, const struct iovec *iov, int iovcnt, off_t offset);
+
+ssize_t
+sys_pwritev (int fd, const struct iovec *iov, int iovcnt, off_t offset);
+
+ssize_t
+sys_pread(int fd, void *buf, size_t count, off_t offset);
+
+ssize_t
+sys_pwrite(int fd, const void *buf, size_t count, off_t offset);
 
 #endif /* __SYSCALL_H__ */

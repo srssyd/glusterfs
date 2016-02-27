@@ -42,7 +42,7 @@ from gsyncdstatus import GeorepStatus
 
 
 UrlRX = re.compile('\A(\w+)://([^ *?[]*)\Z')
-HostRX = re.compile('[a-z\d](?:[a-z\d.-]*[a-z\d])?', re.I)
+HostRX = re.compile('[a-zA-Z\d](?:[a-zA-Z\d.-]*[a-zA-Z\d])?', re.I)
 UserRX = re.compile("[\w!\#$%&'*+-\/=?^_`{|}~]+")
 
 
@@ -717,8 +717,14 @@ class Server(object):
                 st = lstat(entry)
                 if isinstance(st, int):
                     if e['stat'] and not stat.S_ISDIR(e['stat']['mode']):
-                        (pg, bname) = entry2pb(en)
-                        blob = entry_pack_reg_stat(gfid, bname, e['stat'])
+                        if stat.S_ISLNK(e['stat']['mode']) and \
+                           e['link'] is not None:
+                            (pg, bname) = entry2pb(en)
+                            blob = entry_pack_symlink(gfid, bname,
+                                                      e['link'], e['stat'])
+                        else:
+                            (pg, bname) = entry2pb(en)
+                            blob = entry_pack_reg_stat(gfid, bname, e['stat'])
                 else:
                     cmd_ret = errno_wrap(os.rename,
                                          [entry, en],
@@ -900,7 +906,7 @@ class SlaveRemote(object):
                 "RePCe major version mismatch: local %s, remote %s" %
                 (exrv, rv))
 
-    def rsync(self, files, *args):
+    def rsync(self, files, *args, **kw):
         """invoke rsync"""
         if not files:
             raise GsyncdError("no files to sync")
@@ -926,12 +932,15 @@ class SlaveRemote(object):
             po.stdin.write(f)
             po.stdin.write('\0')
 
-        po.stdin.close()
+        stdout, stderr = po.communicate()
+
+        if kw.get("log_err", False):
+            for errline in stderr.strip().split("\n")[:-1]:
+                logging.error("SYNC Error(Rsync): %s" % errline)
 
         if gconf.log_rsync_performance:
-            out = po.stdout.read()
             rsync_msg = []
-            for line in out.split("\n"):
+            for line in stdout.split("\n"):
                 if line.startswith("Number of files:") or \
                    line.startswith("Number of regular files transferred:") or \
                    line.startswith("Total file size:") or \
@@ -943,12 +952,10 @@ class SlaveRemote(object):
                    line.startswith("sent "):
                     rsync_msg.append(line)
             logging.info("rsync performance: %s" % ", ".join(rsync_msg))
-        po.wait()
-        po.terminate_geterr(fail_on_err=False)
 
         return po
 
-    def tarssh(self, files, slaveurl):
+    def tarssh(self, files, slaveurl, log_err=False):
         """invoke tar+ssh
         -z (compress) can be use if needed, but omitting it now
         as it results in weird error (tar+ssh errors out (errcode: 2)
@@ -958,8 +965,9 @@ class SlaveRemote(object):
         logging.debug("files: " + ", ".join(files))
         (host, rdir) = slaveurl.split(':')
         tar_cmd = ["tar"] + \
-            ["-cf", "-", "--files-from", "-"]
+            ["--sparse", "-cf", "-", "--files-from", "-"]
         ssh_cmd = gconf.ssh_command_tar.split() + \
+            ["-p", str(gconf.ssh_port)] + \
             [host, "tar"] + \
             ["--overwrite", "-xf", "-", "-C", rdir]
         p0 = Popen(tar_cmd, stdout=subprocess.PIPE,
@@ -968,15 +976,16 @@ class SlaveRemote(object):
         for f in files:
             p0.stdin.write(f)
             p0.stdin.write('\n')
+
         p0.stdin.close()
-
-        # wait() for tar to terminate, collecting any errors, further
+        p0.stdout.close()  # Allow p0 to receive a SIGPIPE if p1 exits.
+        # wait for tar to terminate, collecting any errors, further
         # waiting for transfer to complete
-        p0.wait()
-        p0.terminate_geterr(fail_on_err=False)
+        _, stderr1 = p1.communicate()
 
-        p1.wait()
-        p1.terminate_geterr(fail_on_err=False)
+        if log_err:
+            for errline in stderr1.strip().split("\n")[:-1]:
+                logging.error("SYNC Error(Untar): %s" % errline)
 
         return p1
 
@@ -1038,8 +1047,8 @@ class FILE(AbstractUrl, SlaveLocal, SlaveRemote):
         """inhibit the resource beyond"""
         os.chdir(self.path)
 
-    def rsync(self, files):
-        return sup(self, files, self.path)
+    def rsync(self, files, log_err=False):
+        return sup(self, files, self.path, log_err=log_err)
 
 
 class GLUSTER(AbstractUrl, SlaveLocal, SlaveRemote):
@@ -1394,8 +1403,6 @@ class GLUSTER(AbstractUrl, SlaveLocal, SlaveRemote):
             # g3 ==> changelog History
             changelog_register_failed = False
             (inf, ouf, ra, wa) = gconf.rpc_fd.split(',')
-            os.close(int(ra))
-            os.close(int(wa))
             changelog_agent = RepceClient(int(inf), int(ouf))
             status = GeorepStatus(gconf.state_file, gconf.local_path)
             status.reset_on_worker_start()
@@ -1455,11 +1462,11 @@ class GLUSTER(AbstractUrl, SlaveLocal, SlaveRemote):
         else:
             sup(self, *args)
 
-    def rsync(self, files):
-        return sup(self, files, self.slavedir)
+    def rsync(self, files, log_err=False):
+        return sup(self, files, self.slavedir, log_err=log_err)
 
-    def tarssh(self, files):
-        return sup(self, files, self.slavedir)
+    def tarssh(self, files, log_err=False):
+        return sup(self, files, self.slavedir, log_err=log_err)
 
 
 class SSH(AbstractUrl, SlaveRemote):
@@ -1542,8 +1549,9 @@ class SSH(AbstractUrl, SlaveRemote):
                                  self.inner_rsc.url)
 
         deferred = go_daemon == 'postconn'
-        ret = sup(self, gconf.ssh_command.split() + gconf.ssh_ctl_args +
-                  [self.remote_addr],
+        ret = sup(self, gconf.ssh_command.split() +
+                  ["-p", str(gconf.ssh_port)] +
+                  gconf.ssh_ctl_args + [self.remote_addr],
                   slave=self.inner_rsc.url, deferred=deferred)
 
         if deferred:
@@ -1565,10 +1573,13 @@ class SSH(AbstractUrl, SlaveRemote):
             self.fd_pair = (i, o)
             return 'should'
 
-    def rsync(self, files):
+    def rsync(self, files, log_err=False):
         return sup(self, files, '-e',
-                   " ".join(gconf.ssh_command.split() + gconf.ssh_ctl_args),
-                   *(gconf.rsync_ssh_options.split() + [self.slaveurl]))
+                   " ".join(gconf.ssh_command.split() +
+                            ["-p", str(gconf.ssh_port)] +
+                            gconf.ssh_ctl_args),
+                   *(gconf.rsync_ssh_options.split() + [self.slaveurl]),
+                   log_err=log_err)
 
-    def tarssh(self, files):
-        return sup(self, files, self.slaveurl)
+    def tarssh(self, files, log_err=False):
+        return sup(self, files, self.slaveurl, log_err=log_err)

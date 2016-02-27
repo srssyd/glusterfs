@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 # Copyright (c) 2015 Red Hat, Inc. <http://www.redhat.com/>
 # This file is part of GlusterFS.
@@ -53,31 +54,38 @@ def node_cmd(host, host_uuid, task, cmd, args, opts):
     """
     Runs command via ssh if host is not local
     """
-    localdir = is_host_local(host_uuid)
+    try:
+        localdir = is_host_local(host_uuid)
 
-    # this is so to avoid deleting the ssh keys on local node which otherwise
-    # cause ssh password prompts on the console (race conditions)
-    # mode_delete() should be cleaning up the session tree
-    if localdir and task == "delete":
-        return
+        # this is so to avoid deleting the ssh keys on local node which
+        # otherwise cause ssh password prompts on the console (race conditions)
+        # mode_delete() should be cleaning up the session tree
+        if localdir and task == "delete":
+            return
 
-    pem_key_path = get_pem_key_path(args.session, args.volume)
+        pem_key_path = get_pem_key_path(args.session, args.volume)
 
-    if not localdir:
-        # prefix with ssh command if not local node
-        cmd = ["ssh",
-               "-i", pem_key_path,
-               "root@%s" % host] + cmd
+        if not localdir:
+            # prefix with ssh command if not local node
+            cmd = ["ssh",
+                   "-oNumberOfPasswordPrompts=0",
+                   "-oStrictHostKeyChecking=no",
+                   "-i", pem_key_path,
+                   "root@%s" % host] + cmd
 
-    execute(cmd, exit_msg="%s - %s failed" % (host, task), logger=logger)
+        execute(cmd, exit_msg="%s - %s failed" % (host, task), logger=logger)
 
-    if opts.get("copy_outfile", False):
-        cmd_copy = ["scp",
-                    "-i", pem_key_path,
-                    "root@%s:/%s" % (host, opts.get("node_outfile")),
-                    os.path.dirname(opts.get("node_outfile"))]
-        execute(cmd_copy, exit_msg="%s - Copy command failed" % host,
-                logger=logger)
+        if opts.get("copy_outfile", False) and not localdir:
+            cmd_copy = ["scp",
+                        "-oNumberOfPasswordPrompts=0",
+                        "-oStrictHostKeyChecking=no",
+                        "-i", pem_key_path,
+                        "root@%s:/%s" % (host, opts.get("node_outfile")),
+                        os.path.dirname(opts.get("node_outfile"))]
+            execute(cmd_copy, exit_msg="%s - Copy command failed" % host,
+                    logger=logger)
+    except KeyboardInterrupt:
+        sys.exit(2)
 
 
 def run_cmd_nodes(task, args, **kwargs):
@@ -114,8 +122,29 @@ def run_cmd_nodes(task, args, **kwargs):
                    "--output-prefix",
                    args.output_prefix] + \
                 (["--debug"] if args.debug else []) + \
+                (["--no-encode"] if args.no_encode else []) + \
                 (["--only-namespace-changes"] if args.only_namespace_changes
                  else [])
+
+            opts["node_outfile"] = node_outfile
+            opts["copy_outfile"] = True
+        elif task == "query":
+            # If Full backup is requested or start time is zero, use brickfind
+            change_detector = conf.get_change_detector("changelog")
+            node_outfiles.append(node_outfile)
+
+            cmd = [change_detector,
+                   args.session,
+                   args.volume,
+                   brick,
+                   node_outfile,
+                   str(kwargs.get("start"))] + \
+                ["--only-query"] + \
+                ["--output-prefix", args.output_prefix] + \
+                (["--debug"] if args.debug else []) + \
+                (["--no-encode"] if args.no_encode else []) + \
+                (["--only-namespace-changes"]
+                    if args.only_namespace_changes else [])
 
             opts["node_outfile"] = node_outfile
             opts["copy_outfile"] = True
@@ -251,6 +280,9 @@ def _get_args():
     parser_pre.add_argument("volume", help="Volume Name")
     parser_pre.add_argument("outfile", help="Output File", action=StoreAbsPath)
     parser_pre.add_argument("--debug", help="Debug", action="store_true")
+    parser_pre.add_argument("--no-encode",
+                            help="Do not encode path in output file",
+                            action="store_true")
     parser_pre.add_argument("--full", help="Full find", action="store_true")
     parser_pre.add_argument("--disable-partial", help="Disable Partial find, "
                             "Fail when one node fails", action="store_true")
@@ -260,6 +292,23 @@ def _get_args():
                             help="Regenerate outfile, discard the outfile "
                             "generated from last pre command",
                             action="store_true")
+    parser_pre.add_argument("-N", "--only-namespace-changes",
+                            help="List only namespace changes",
+                            action="store_true")
+
+    # query <VOLUME> <OUTFILE> --since-time <SINCE_TIME>
+    #       [--output-prefix <OUTPUT_PREFIX>] [--full]
+    parser_pre = subparsers.add_parser('query')
+    parser_pre.add_argument("volume", help="Volume Name")
+    parser_pre.add_argument("outfile", help="Output File",
+                            action=StoreAbsPath)
+    parser_pre.add_argument("--since-time", help="UNIX epoch time since which "
+                            "listing is required", type=int)
+    parser_pre.add_argument("--debug", help="Debug", action="store_true")
+    parser_pre.add_argument("--disable-partial", help="Disable Partial find, "
+                            "Fail when one node fails", action="store_true")
+    parser_pre.add_argument("--output-prefix", help="File prefix in output",
+                            default=".")
     parser_pre.add_argument("-N", "--only-namespace-changes",
                             help="List only namespace changes",
                             action="store_true")
@@ -326,6 +375,52 @@ def ssh_setup(args):
     logger.info("Ssh key added to authorized_keys of Volume nodes")
 
 
+def enable_volume_options(args):
+    execute(["gluster", "volume", "set",
+             args.volume, "build-pgfid", "on"],
+            exit_msg="Failed to set volume option build-pgfid on",
+            logger=logger)
+    logger.info("Volume option set %s, build-pgfid on" % args.volume)
+
+    execute(["gluster", "volume", "set",
+             args.volume, "changelog.changelog", "on"],
+            exit_msg="Failed to set volume option "
+            "changelog.changelog on", logger=logger)
+    logger.info("Volume option set %s, changelog.changelog on"
+                % args.volume)
+
+    execute(["gluster", "volume", "set",
+             args.volume, "changelog.capture-del-path", "on"],
+            exit_msg="Failed to set volume option "
+            "changelog.capture-del-path on", logger=logger)
+    logger.info("Volume option set %s, changelog.capture-del-path on"
+                % args.volume)
+
+
+def write_output(args, outfilemerger):
+    with open(args.outfile, "a") as f:
+        for row in outfilemerger.get():
+            # Multiple paths in case of Hardlinks
+            paths = row[1].split(",")
+            row_2_rep = None
+            for p in paths:
+                if p == "":
+                    continue
+                p_rep = p.replace("%2F%2F", "%2F").replace("//", "/")
+                if not row_2_rep:
+                    row_2_rep = row[2].replace("%2F%2F", "%2F").replace("//",
+                                                                        "/")
+                if p_rep == row_2_rep:
+                    continue
+
+                p_rep = p_rep.encode('utf8', 'replace')
+                row_2_rep = row_2_rep.encode('utf8', 'replace')
+
+                f.write("{0} {1} {2}\n".format(row[0],
+                                               p_rep,
+                                               row_2_rep))
+
+
 def mode_create(session_dir, args):
     logger.debug("Init is called - Session: %s, Volume: %s"
                  % (args.session, args.volume))
@@ -353,26 +448,7 @@ def mode_create(session_dir, args):
 
     if not os.path.exists(status_file) or args.force:
         ssh_setup(args)
-
-        execute(["gluster", "volume", "set",
-                 args.volume, "build-pgfid", "on"],
-                exit_msg="Failed to set volume option build-pgfid on",
-                logger=logger)
-        logger.info("Volume option set %s, build-pgfid on" % args.volume)
-
-        execute(["gluster", "volume", "set",
-                 args.volume, "changelog.changelog", "on"],
-                exit_msg="Failed to set volume option "
-                "changelog.changelog on", logger=logger)
-        logger.info("Volume option set %s, changelog.changelog on"
-                    % args.volume)
-
-        execute(["gluster", "volume", "set",
-                 args.volume, "changelog.capture-del-path", "on"],
-                exit_msg="Failed to set volume option "
-                "changelog.capture-del-path on", logger=logger)
-        logger.info("Volume option set %s, changelog.capture-del-path on"
-                    % args.volume)
+        enable_volume_options(args)
 
     # Add Rollover time to current time to make sure changelogs
     # will be available if we use this time as start time
@@ -389,6 +465,59 @@ def mode_create(session_dir, args):
                      (args.session, args.volume))
 
     sys.exit(0)
+
+
+def mode_query(session_dir, args):
+    # Verify volume status
+    cmd = ["gluster", 'volume', 'info', args.volume, "--xml"]
+    _, data, _ = execute(cmd,
+                         exit_msg="Failed to Run Gluster Volume Info",
+                         logger=logger)
+    try:
+        tree = etree.fromstring(data)
+        statusStr = tree.find('volInfo/volumes/volume/statusStr').text
+    except (ParseError, AttributeError) as e:
+        fail("Invalid Volume: %s" % e, logger=logger)
+
+    if statusStr != "Started":
+        fail("Volume %s is not online" % args.volume, logger=logger)
+
+    mkdirp(session_dir, exit_on_err=True, logger=logger)
+    mkdirp(os.path.join(session_dir, args.volume), exit_on_err=True,
+           logger=logger)
+    mkdirp(os.path.dirname(args.outfile), exit_on_err=True, logger=logger)
+
+    # Configure cluster for pasword-less SSH
+    ssh_setup(args)
+
+    # Enable volume options for changelog capture
+    enable_volume_options(args)
+
+    # Start query command processing
+    if args.since_time:
+        start = args.since_time
+        logger.debug("Query is called - Session: %s, Volume: %s, "
+                     "Start time: %s"
+                     % ("default", args.volume, start))
+
+        run_cmd_nodes("query", args, start=start)
+
+        # Merger
+        # Read each Changelogs db and generate finaldb
+        create_file(args.outfile, exit_on_err=True, logger=logger)
+        outfilemerger = OutputMerger(args.outfile + ".db", node_outfiles)
+        write_output(args, outfilemerger)
+
+        try:
+            os.remove(args.outfile + ".db")
+        except (IOError, OSError):
+            pass
+
+        run_cmd_nodes("cleanup", args)
+
+        sys.stdout.write("Generated output file %s\n" % args.outfile)
+    else:
+        fail("Please specify --since-time option")
 
 
 def mode_pre(session_dir, args):
@@ -434,15 +563,7 @@ def mode_pre(session_dir, args):
         create_file(args.outfile, exit_on_err=True, logger=logger)
         outfilemerger = OutputMerger(args.outfile + ".db", node_outfiles)
 
-        with open(args.outfile, "a") as f:
-            for row in outfilemerger.get():
-                # Multiple paths in case of Hardlinks
-                paths = row[1].split(",")
-                for p in paths:
-                    if p == "" or p.replace("%2F%2F","%2F") == \
-                       row[2].replace("%2F%2F","%2F"):
-                        continue
-                    f.write("%s %s %s\n" % (row[0], p, row[2]))
+        write_output(args, outfilemerger)
 
     try:
         os.remove(args.outfile + ".db")
@@ -555,31 +676,48 @@ def mode_list(session_dir, args):
 
 
 def main():
-    args = _get_args()
-    mkdirp(conf.get_opt("session_dir"), exit_on_err=True)
+    try:
+        args = _get_args()
+        mkdirp(conf.get_opt("session_dir"), exit_on_err=True)
 
-    if args.mode == "list":
-        session_dir = conf.get_opt("session_dir")
-    else:
-        session_dir = os.path.join(conf.get_opt("session_dir"),
-                                   args.session)
+        # force the default session name if mode is "query"
+        if args.mode == "query":
+            args.session = "default"
 
-    if not os.path.exists(session_dir) and args.mode not in ["create", "list"]:
-        fail("Invalid session %s" % args.session)
+        if args.mode == "list":
+            session_dir = conf.get_opt("session_dir")
+        else:
+            session_dir = os.path.join(conf.get_opt("session_dir"),
+                                       args.session)
 
-    vol_dir = os.path.join(session_dir, args.volume)
-    if not os.path.exists(vol_dir) and args.mode not in ["create", "list"]:
-        fail("Session %s not created with volume %s" %
-             (args.session, args.volume))
+        if not os.path.exists(session_dir) and \
+                args.mode not in ["create", "list", "query"]:
+            fail("Invalid session %s" % args.session)
 
-    mkdirp(os.path.join(conf.get_opt("log_dir"), args.session, args.volume),
-           exit_on_err=True)
-    log_file = os.path.join(conf.get_opt("log_dir"),
+        # "default" is a system defined session name
+        if args.mode in ["create", "post", "pre", "delete"] and \
+                args.session == "default":
+            fail("Invalid session %s" % args.session)
+
+        vol_dir = os.path.join(session_dir, args.volume)
+        if not os.path.exists(vol_dir) and args.mode not in \
+                ["create", "list", "query"]:
+            fail("Session %s not created with volume %s" %
+                 (args.session, args.volume))
+
+        mkdirp(os.path.join(conf.get_opt("log_dir"),
                             args.session,
-                            args.volume,
-                            "cli.log")
-    setup_logger(logger, log_file, args.debug)
+                            args.volume),
+               exit_on_err=True)
+        log_file = os.path.join(conf.get_opt("log_dir"),
+                                args.session,
+                                args.volume,
+                                "cli.log")
+        setup_logger(logger, log_file, args.debug)
 
-    # globals() will have all the functions already defined.
-    # mode_<args.mode> will be the function name to be called
-    globals()["mode_" + args.mode](session_dir, args)
+        # globals() will have all the functions already defined.
+        # mode_<args.mode> will be the function name to be called
+        globals()["mode_" + args.mode](session_dir, args)
+    except KeyboardInterrupt:
+        # Interrupted, exit with non zero error code
+        sys.exit(2)

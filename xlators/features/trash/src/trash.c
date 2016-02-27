@@ -9,6 +9,7 @@
 */
 #include "trash.h"
 #include "trash-mem-types.h"
+#include "syscall.h"
 
 #define root_gfid        (uuid_t){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
 #define trash_gfid       (uuid_t){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5}
@@ -48,7 +49,7 @@ get_permission (char *path)
         struct iatt             ibuf                    = {0,};
         int                     ret                     = 0;
 
-        ret = stat (path, &sbuf);
+        ret = sys_stat (path, &sbuf);
         if (!ret) {
                 iatt_from_stat (&ibuf, &sbuf);
                 mode = st_mode_from_ia (ibuf.ia_prot, ibuf.ia_type);
@@ -835,7 +836,7 @@ trash_unlink_rename_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
          * CTR Xlator. And trash translator only handles the unlink for
          * the last hardlink.
          *
-         * Check if there is a CTR_REQUEST_LINK_COUNT_XDATA from CTR Xlator
+         * Check if there is a GF_REQUEST_LINK_COUNT_XDATA from CTR Xlator
          *
          */
 
@@ -843,16 +844,16 @@ trash_unlink_rename_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 
                 /* Sending back inode link count to ctr_unlink
                  * (changetimerecoder xlator) via
-                 * "CTR_RESPONSE_LINK_COUNT_XDATA" key using xdata.
+                 * "GF_RESPONSE_LINK_COUNT_XDATA" key using xdata.
                  * */
                 if (xdata) {
                         ret = dict_set_uint32 (xdata,
-                                               CTR_RESPONSE_LINK_COUNT_XDATA,
+                                               GF_RESPONSE_LINK_COUNT_XDATA,
                                                1);
                         if (ret == -1) {
                                 gf_log (this->name, GF_LOG_WARNING,
                                         "Failed to set"
-                                        " CTR_RESPONSE_LINK_COUNT_XDATA");
+                                        " GF_RESPONSE_LINK_COUNT_XDATA");
                         }
                 } else {
                         new_xdata = dict_new ();
@@ -863,23 +864,23 @@ trash_unlink_rename_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                                 goto ctr_out;
                         }
                         ret = dict_set_uint32 (new_xdata,
-                                               CTR_RESPONSE_LINK_COUNT_XDATA,
+                                               GF_RESPONSE_LINK_COUNT_XDATA,
                                                1);
                         if (ret == -1) {
                                 gf_log (this->name, GF_LOG_WARNING,
                                         "Failed to set"
-                                        " CTR_RESPONSE_LINK_COUNT_XDATA");
+                                        " GF_RESPONSE_LINK_COUNT_XDATA");
                         }
 ctr_out:
                         TRASH_STACK_UNWIND (unlink, frame, 0, op_errno,
-                                            &local->preparent,
-                                            &local->postparent, new_xdata);
+                                            preoldparent, postoldparent,
+                                            new_xdata);
                         goto out;
                 }
          }
         /* All other cases, unlink should return success */
-        TRASH_STACK_UNWIND (unlink, frame, 0, op_errno, &local->preparent,
-                            &local->postparent, xdata);
+        TRASH_STACK_UNWIND (unlink, frame, 0, op_errno, preoldparent,
+                            postoldparent, xdata);
 out:
 
         if (tmp_str)
@@ -1087,7 +1088,7 @@ trash_unlink (call_frame_t *frame, xlator_t *this, loc_t *loc, int xflags,
         }
 
         /* To know whether CTR xlator requested for the link count */
-        ret = dict_get_int32 (xdata, CTR_REQUEST_LINK_COUNT_XDATA,
+        ret = dict_get_int32 (xdata, GF_REQUEST_LINK_COUNT_XDATA,
                               &ctr_link_req);
         if (ret) {
                 local->ctr_link_count_req = _gf_false;

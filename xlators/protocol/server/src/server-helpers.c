@@ -12,6 +12,7 @@
 #include "server-helpers.h"
 #include "gidcache.h"
 #include "server-messages.h"
+#include "syscall.h"
 
 #include <fnmatch.h>
 #include <pwd.h>
@@ -422,6 +423,7 @@ get_frame_from_request (rpcsvc_request_t *req)
         server_conf_t *priv = NULL;
         clienttable_t *clienttable = NULL;
         unsigned int   i           = 0;
+        rpc_transport_t *trans = NULL;
 
         GF_VALIDATE_OR_GOTO ("server", req, out);
 
@@ -473,7 +475,7 @@ get_frame_from_request (rpcsvc_request_t *req)
                             req->pid != GF_CLIENT_PID_NO_ROOT_SQUASH &&
                             req->pid != GF_CLIENT_PID_GSYNCD &&
                             req->pid != GF_CLIENT_PID_DEFRAG &&
-                            req->pid != GF_CLIENT_PID_AFR_SELF_HEALD &&
+                            req->pid != GF_CLIENT_PID_SELF_HEALD &&
                             req->pid != GF_CLIENT_PID_QUOTA_MOUNT)
                                 RPC_AUTH_ROOT_SQUASH (req);
 
@@ -499,6 +501,12 @@ get_frame_from_request (rpcsvc_request_t *req)
             server_resolve_groups (frame, req);
         else
             server_decode_groups (frame, req);
+        trans = req->trans;
+        if (trans) {
+                memcpy (&frame->root->identifier, trans->peerinfo.identifier,
+                        sizeof (trans->peerinfo.identifier));
+        }
+
 
         frame->local = req;
 out:
@@ -556,7 +564,7 @@ server_build_config (xlator_t *this, server_conf_t *conf)
         if (data) {
                 /* Check whether the specified directory exists,
                    or directory specified is non standard */
-                ret = stat (data->data, &buf);
+                ret = sys_stat (data->data, &buf);
                 if ((ret != 0) || !S_ISDIR (buf.st_mode)) {
                         gf_msg (this->name, GF_LOG_ERROR, 0,
                                 PS_MSG_DIR_NOT_FOUND, "Directory '%s' doesn't "

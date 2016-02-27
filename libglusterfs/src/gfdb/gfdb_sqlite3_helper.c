@@ -21,8 +21,9 @@
  * ****************************************************************************/
 
 static int
-gf_sql_delete_all (gf_sql_connection_t *sql_conn,
-                  char              *gfid)
+gf_sql_delete_all (gf_sql_connection_t  *sql_conn,
+                  char                  *gfid,
+                  gf_boolean_t          ignore_errors)
 {
         int ret = -1;
         sqlite3_stmt *delete_file_stmt = NULL;
@@ -66,7 +67,9 @@ gf_sql_delete_all (gf_sql_connection_t *sql_conn,
 
         /*Execute the prepare statement*/
         if (sqlite3_step (delete_link_stmt) != SQLITE_DONE) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_EXEC_FAILED,
+                gf_msg (GFDB_STR_SQLITE3,
+                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors), 0,
+                        LG_MSG_EXEC_FAILED,
                         "Failed executing the prepared stmt %s : %s",
                         delete_link_str,
                         sqlite3_errmsg (sql_conn->sqlite3_db_conn));
@@ -103,7 +106,9 @@ gf_sql_delete_all (gf_sql_connection_t *sql_conn,
 
         /*Execute the prepare statement*/
         if (sqlite3_step (delete_file_stmt) != SQLITE_DONE) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_EXEC_FAILED,
+                gf_msg (GFDB_STR_SQLITE3,
+                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors), 0,
+                        LG_MSG_EXEC_FAILED,
                         "Failed executing the prepared stmt %s : %s",
                         delete_file_str,
                         sqlite3_errmsg (sql_conn->sqlite3_db_conn));
@@ -122,7 +127,8 @@ static int
 gf_sql_delete_link (gf_sql_connection_t  *sql_conn,
                    char                 *gfid,
                    char                 *pargfid,
-                   char                 *basename)
+                   char                 *basename,
+                   gf_boolean_t         ignore_errors)
 {
         int ret = -1;
         sqlite3_stmt *delete_stmt = NULL;
@@ -183,7 +189,9 @@ gf_sql_delete_link (gf_sql_connection_t  *sql_conn,
 
         /*Execute the prepare statement*/
         if (sqlite3_step(delete_stmt) != SQLITE_DONE) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_EXEC_FAILED,
+                gf_msg (GFDB_STR_SQLITE3,
+                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors), 0,
+                        LG_MSG_EXEC_FAILED,
                         "Failed executing the prepared stmt %s : %s",
                         delete_str,
                         sqlite3_errmsg (sql_conn->sqlite3_db_conn));
@@ -207,7 +215,8 @@ gf_sql_update_link_flags (gf_sql_connection_t  *sql_conn,
                    char                 *pargfid,
                    char                 *basename,
                    int                  update_flag,
-                   gf_boolean_t         is_update_or_delete)
+                   gf_boolean_t         is_update_or_delete,
+                   gf_boolean_t         ignore_errors)
 {
         int ret = -1;
         sqlite3_stmt *update_stmt = NULL;
@@ -287,7 +296,9 @@ gf_sql_update_link_flags (gf_sql_connection_t  *sql_conn,
 
         /*Execute the prepare statement*/
         if (sqlite3_step(update_stmt) != SQLITE_DONE) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_EXEC_FAILED,
+                gf_msg (GFDB_STR_SQLITE3,
+                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors), 0,
+                        LG_MSG_EXEC_FAILED,
                         "Failed executing the prepared stmt %s : %s",
                         update_str,
                         sqlite3_errmsg (sql_conn->sqlite3_db_conn));
@@ -308,7 +319,6 @@ gf_sql_insert_link (gf_sql_connection_t  *sql_conn,
                    char                 *gfid,
                    char                 *pargfid,
                    char                 *basename,
-                   char                 *basepath,
                    gf_boolean_t         link_consistency,
                    gf_boolean_t         ignore_errors)
 {
@@ -318,24 +328,21 @@ gf_sql_insert_link (gf_sql_connection_t  *sql_conn,
 
         sprintf (insert_str, "INSERT INTO "
                            GF_FILE_LINK_TABLE
-                           " (GF_ID, GF_PID, FNAME, FPATH,"
+                           " (GF_ID, GF_PID, FNAME,"
                            " W_DEL_FLAG, LINK_UPDATE) "
-                           " VALUES (?, ?, ?, ?, 0, %d);",
+                           " VALUES (?, ?, ?, 0, %d);",
                            link_consistency);
 
         CHECK_SQL_CONN (sql_conn, out);
         GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, gfid, out);
         GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, pargfid, out);
         GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, basename, out);
-        GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, basepath, out);
 
         /*Prepare statement*/
         ret = sqlite3_prepare (sql_conn->sqlite3_db_conn, insert_str, -1,
                                 &insert_stmt, 0);
         if (ret != SQLITE_OK) {
-                gf_msg (GFDB_STR_SQLITE3,
-                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors),
-                        0,
+                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
                         LG_MSG_PREPARE_FAILED,
                         "Failed preparing insert "
                         "statment %s : %s", insert_str,
@@ -347,9 +354,7 @@ gf_sql_insert_link (gf_sql_connection_t  *sql_conn,
         /*Bind gfid*/
         ret = sqlite3_bind_text (insert_stmt, 1, gfid, -1, NULL);
         if (ret != SQLITE_OK) {
-                gf_msg (GFDB_STR_SQLITE3,
-                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors),
-                        0,
+                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
                         LG_MSG_BINDING_FAILED,
                         "Failed binding gfid %s : %s",
                         gfid, sqlite3_errmsg (sql_conn->sqlite3_db_conn));
@@ -360,8 +365,7 @@ gf_sql_insert_link (gf_sql_connection_t  *sql_conn,
         /*Bind pargfid*/
         ret = sqlite3_bind_text (insert_stmt, 2, pargfid, -1, NULL);
         if (ret != SQLITE_OK) {
-                gf_msg (GFDB_STR_SQLITE3,
-                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors),
+                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR,
                         0, LG_MSG_BINDING_FAILED,
                         "Failed binding parent gfid %s "
                         ": %s", pargfid,
@@ -373,23 +377,9 @@ gf_sql_insert_link (gf_sql_connection_t  *sql_conn,
         /*Bind basename*/
         ret = sqlite3_bind_text (insert_stmt, 3, basename, -1, NULL);
         if (ret != SQLITE_OK) {
-                gf_msg (GFDB_STR_SQLITE3,
-                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors),
+                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR,
                         0, LG_MSG_BINDING_FAILED,
                         "Failed binding basename %s : %s", basename,
-                        sqlite3_errmsg (sql_conn->sqlite3_db_conn));
-                ret = -1;
-                goto out;
-        }
-
-        /*Bind basepath*/
-        ret = sqlite3_bind_text (insert_stmt, 4, basepath, -1, NULL);
-        if (ret != SQLITE_OK) {
-                gf_msg (GFDB_STR_SQLITE3,
-                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors), 0,
-                        LG_MSG_BINDING_FAILED,
-                        "Failed binding basepath %s : "
-                        "%s", basepath,
                         sqlite3_errmsg (sql_conn->sqlite3_db_conn));
                 ret = -1;
                 goto out;
@@ -401,8 +391,8 @@ gf_sql_insert_link (gf_sql_connection_t  *sql_conn,
                         _gfdb_log_level (GF_LOG_ERROR, ignore_errors),
                         0, LG_MSG_EXEC_FAILED,
                         "Failed executing the prepared "
-                        "stmt %s %s %s %s %s : %s",
-                        gfid, pargfid, basename, basepath, insert_str,
+                        "stmt %s %s %s %s : %s",
+                        gfid, pargfid, basename, insert_str,
                         sqlite3_errmsg (sql_conn->sqlite3_db_conn));
                 ret = -1;
                 goto out;
@@ -421,10 +411,10 @@ gf_sql_update_link (gf_sql_connection_t  *sql_conn,
                    char                 *gfid,
                    char                 *pargfid,
                    char                 *basename,
-                   char                 *basepath,
                    char                 *old_pargfid,
                    char                 *old_basename,
-                   gf_boolean_t         link_consistency)
+                   gf_boolean_t         link_consistency,
+                   gf_boolean_t         ignore_errors)
 {
         int ret = -1;
         sqlite3_stmt *insert_stmt = NULL;
@@ -432,16 +422,15 @@ gf_sql_update_link (gf_sql_connection_t  *sql_conn,
 
         sprintf (insert_str, "INSERT INTO "
                             GF_FILE_LINK_TABLE
-                            " (GF_ID, GF_PID, FNAME, FPATH,"
+                            " (GF_ID, GF_PID, FNAME,"
                             " W_DEL_FLAG, LINK_UPDATE) "
-                            " VALUES (? , ?, ?, ?, 0, %d);",
+                            " VALUES (? , ?, ?, 0, %d);",
                             link_consistency);
 
         CHECK_SQL_CONN (sql_conn, out);
         GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, gfid, out);
         GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, pargfid, out);
         GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, basename, out);
-        GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, basepath, out);
         GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, old_pargfid, out);
         GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, old_basename, out);
 
@@ -451,9 +440,10 @@ gf_sql_update_link (gf_sql_connection_t  *sql_conn,
          *
          * */
          ret = gf_sql_delete_link (sql_conn, gfid, old_pargfid,
-                                old_basename);
+                                old_basename, ignore_errors);
         if (ret) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
+                gf_msg (GFDB_STR_SQLITE3,
+                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors), 0,
                         LG_MSG_DELETE_FAILED, "Failed deleting old link");
                 goto out;
         }
@@ -507,20 +497,11 @@ gf_sql_update_link (gf_sql_connection_t  *sql_conn,
                 goto out;
         }
 
-        /*Bind new basepath*/
-        ret = sqlite3_bind_text (insert_stmt, 4, basepath, -1, NULL);
-        if (ret != SQLITE_OK) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                        LG_MSG_BINDING_FAILED, "Failed binding basename %s : "
-                        "%s", basepath,
-                        sqlite3_errmsg (sql_conn->sqlite3_db_conn));
-                ret = -1;
-                goto out;
-        }
-
         /*Execute the prepare statement*/
         if (sqlite3_step (insert_stmt) != SQLITE_DONE) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_EXEC_FAILED,
+                gf_msg (GFDB_STR_SQLITE3,
+                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors), 0,
+                        LG_MSG_EXEC_FAILED,
                         "Failed executing the prepared stmt %s : %s",
                         insert_str,
                         sqlite3_errmsg (sql_conn->sqlite3_db_conn));
@@ -538,9 +519,10 @@ out:
 }
 
 static int
-gf_sql_insert_write_wind_time (gf_sql_connection_t  *sql_conn,
-                                char                 *gfid,
-                                gfdb_time_t          *wind_time)
+gf_sql_insert_write_wind_time (gf_sql_connection_t      *sql_conn,
+                                char                    *gfid,
+                                gfdb_time_t             *wind_time,
+                                gf_boolean_t            ignore_errors)
 {
         int ret = -1;
         sqlite3_stmt *insert_stmt = NULL;
@@ -600,7 +582,9 @@ gf_sql_insert_write_wind_time (gf_sql_connection_t  *sql_conn,
 
         /*Execute the prepare statement*/
         if (sqlite3_step (insert_stmt) != SQLITE_DONE) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_EXEC_FAILED,
+                gf_msg (GFDB_STR_SQLITE3,
+                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors), 0,
+                        LG_MSG_EXEC_FAILED,
                         "Failed executing the prepared stmt GFID:%s %s : %s",
                         gfid, insert_str,
                         sqlite3_errmsg (sql_conn->sqlite3_db_conn));
@@ -624,7 +608,8 @@ gf_update_time (gf_sql_connection_t    *sql_conn,
                 gfdb_time_t             *update_time,
                 gf_boolean_t            record_counter,
                 gf_boolean_t            is_wind,
-                gf_boolean_t            is_read)
+                gf_boolean_t            is_read,
+                gf_boolean_t            ignore_errors)
 {
         int ret = -1;
         sqlite3_stmt *update_stmt = NULL;
@@ -726,7 +711,9 @@ gf_update_time (gf_sql_connection_t    *sql_conn,
 
         /*Execute the prepare statement*/
         if (sqlite3_step (update_stmt) != SQLITE_DONE) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_EXEC_FAILED,
+                gf_msg (GFDB_STR_SQLITE3,
+                        _gfdb_log_level (GF_LOG_ERROR, ignore_errors), 0,
+                        LG_MSG_EXEC_FAILED,
                         "Failed executing the prepared stmt %s : %s",
                         update_str,
                         sqlite3_errmsg (sql_conn->sqlite3_db_conn));
@@ -767,8 +754,8 @@ gf_sql_insert_wind (gf_sql_connection_t  *sql_conn,
 
         gfid_str = gf_strdup (uuid_utoa (gfdb_db_record->gfid));
         if (!gfid_str) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                        LG_MSG_CREATE_FAILED, "Creating gfid string failed.");
+                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_CREATE_FAILED,
+                        "Creating gfid string failed.");
                 goto out;
         }
 
@@ -779,8 +766,8 @@ gf_sql_insert_wind (gf_sql_connection_t  *sql_conn,
                 /*Parent GFID is always set*/
                 pargfid_str = gf_strdup (uuid_utoa (gfdb_db_record->pargfid));
                 if (!pargfid_str) {
-                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                LG_MSG_CREATE_FAILED, "Creating gfid string "
+                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR,
+                                0, LG_MSG_CREATE_FAILED, "Creating gfid string "
                                 "failed.");
                         goto out;
                 }
@@ -791,14 +778,34 @@ gf_sql_insert_wind (gf_sql_connection_t  *sql_conn,
                         ret = gf_sql_insert_link(sql_conn,
                                         gfid_str, pargfid_str,
                                         gfdb_db_record->file_name,
-                                        gfdb_db_record->file_path,
                                         gfdb_db_record->link_consistency,
-                                        gfdb_db_record->ignore_errors);
+                                        _gf_true);
                         if (ret) {
-                                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
+                                gf_msg (GFDB_STR_SQLITE3,
+                                        _gfdb_log_level (GF_LOG_WARNING,
+                                                gfdb_db_record->ignore_errors),
+                                        0,
                                         LG_MSG_INSERT_FAILED, "Failed "
                                         "inserting link in DB");
-                                goto out;
+                                /* Even if link creation is failed we
+                                 * continue with the creation of file record.
+                                 * This covers to cases
+                                 * 1) Lookup heal: If the file record from
+                                 * gf_file_tb is deleted but the link record
+                                 * still exist. Lookup heal will attempt a heal
+                                 * with create_wind set. The link heal will fail
+                                 * as there is already a record and if we dont
+                                 * ignore the error we will not heal the
+                                 * gf_file_tb.
+                                 * 2) Rename file in cold tier: During a rename
+                                 * of a file that is there in cold tier. We get
+                                 * an link record created in hot tier for the
+                                 * linkto file. When the file gets heated and
+                                 * moves to hot tier there will be attempt from
+                                 * ctr lookup heal to create link and file
+                                 * record and If we dont ignore the error we
+                                 * will not heal the gf_file_tb.
+                                 * */
                         }
                         gfdb_db_record->islinkupdate = gfdb_db_record->
                                                         link_consistency;
@@ -808,11 +815,13 @@ gf_sql_insert_wind (gf_sql_connection_t  *sql_conn,
                          * for the first time
                          * */
                         ret = gf_sql_insert_write_wind_time (sql_conn, gfid_str,
-                                                                modtime);
+                                        modtime, gfdb_db_record->ignore_errors);
                         if (ret) {
-                                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                        LG_MSG_INSERT_FAILED, "Failed "
-                                        "inserting wind time in DB");
+                                gf_msg (GFDB_STR_SQLITE3,
+                                        _gfdb_log_level (GF_LOG_ERROR,
+                                                gfdb_db_record->ignore_errors),
+                                        0, LG_MSG_INSERT_FAILED,
+                                        "Failed inserting wind time in DB");
                                 goto out;
                         }
                         goto out;
@@ -832,13 +841,15 @@ gf_sql_insert_wind (gf_sql_connection_t  *sql_conn,
                                 ret = gf_sql_update_link (sql_conn, gfid_str,
                                                 pargfid_str,
                                                 gfdb_db_record->file_name,
-                                                gfdb_db_record->file_path,
                                                 old_pargfid_str,
                                                 gfdb_db_record->old_file_name,
                                                 gfdb_db_record->
-                                                        link_consistency);
+                                                        link_consistency,
+                                                gfdb_db_record->ignore_errors);
                                 if (ret) {
-                                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR,
+                                        gf_msg (GFDB_STR_SQLITE3,
+                                                _gfdb_log_level (GF_LOG_ERROR,
+                                                gfdb_db_record->ignore_errors),
                                                 0, LG_MSG_UPDATE_FAILED,
                                                 "Failed updating link");
                                         goto out;
@@ -849,13 +860,15 @@ gf_sql_insert_wind (gf_sql_connection_t  *sql_conn,
                         /*link*/
                         else {
                                 ret = gf_sql_insert_link (sql_conn,
-                                        gfid_str, pargfid_str,
-                                        gfdb_db_record->file_name,
-                                        gfdb_db_record->file_path,
-                                        gfdb_db_record->link_consistency,
-                                        gfdb_db_record->ignore_errors);
+                                                gfid_str, pargfid_str,
+                                                gfdb_db_record->file_name,
+                                                gfdb_db_record->
+                                                        link_consistency,
+                                                gfdb_db_record->ignore_errors);
                                 if (ret) {
-                                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR,
+                                        gf_msg (GFDB_STR_SQLITE3,
+                                                _gfdb_log_level (GF_LOG_ERROR,
+                                                gfdb_db_record->ignore_errors),
                                                 0, LG_MSG_INSERT_FAILED,
                                                 "Failed inserting link in DB");
                                         goto out;
@@ -870,11 +883,14 @@ gf_sql_insert_wind (gf_sql_connection_t  *sql_conn,
         if (gfdb_db_record->do_record_times) {
                 /*All fops update times read or write*/
                 ret = gf_update_time (sql_conn, gfid_str, modtime,
-                        gfdb_db_record->do_record_counters,
-                        its_wind,
-                        isreadfop (gfdb_db_record->gfdb_fop_type));
+                                gfdb_db_record->do_record_counters,
+                                its_wind,
+                                isreadfop (gfdb_db_record->gfdb_fop_type),
+                                gfdb_db_record->ignore_errors);
                 if (ret) {
-                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
+                        gf_msg (GFDB_STR_SQLITE3,
+                                _gfdb_log_level (GF_LOG_ERROR,
+                                gfdb_db_record->ignore_errors), 0,
                                 LG_MSG_UPDATE_FAILED, "Failed update wind time"
                                 " in DB");
                         goto out;
@@ -920,10 +936,13 @@ gf_sql_insert_unwind (gf_sql_connection_t  *sql_conn,
                 ret = gf_update_time (sql_conn, gfid_str, modtime,
                         gfdb_db_record->do_record_counters,
                         (!its_wind),
-                        isreadfop (gfdb_db_record->gfdb_fop_type));
+                        isreadfop (gfdb_db_record->gfdb_fop_type),
+                        gfdb_db_record->ignore_errors);
                 if (ret) {
-                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                LG_MSG_UPDATE_FAILED, "Failed update unwind "
+                        gf_msg (GFDB_STR_SQLITE3,
+                                _gfdb_log_level (GF_LOG_ERROR,
+                                        gfdb_db_record->ignore_errors),
+                                0, LG_MSG_UPDATE_FAILED, "Failed update unwind "
                                 "time in DB");
                         goto out;
                 }
@@ -935,18 +954,21 @@ gf_sql_insert_unwind (gf_sql_connection_t  *sql_conn,
 
                 pargfid_str = gf_strdup(uuid_utoa(gfdb_db_record->pargfid));
                 if (!pargfid_str) {
-                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                LG_MSG_CREATE_FAILED,
+                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR,
+                                0, LG_MSG_CREATE_FAILED,
                                 "Creating pargfid_str string failed.");
                         goto out;
                 }
 
                 ret = gf_sql_update_link_flags (sql_conn, gfid_str, pargfid_str,
-                                        gfdb_db_record->file_name, 0, _gf_true);
+                                        gfdb_db_record->file_name, 0, _gf_true,
+                                        gfdb_db_record->ignore_errors);
                 if (ret) {
-                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                LG_MSG_UPDATE_FAILED, "Failed updating link "
-                                "flags in unwind");
+                        gf_msg (GFDB_STR_SQLITE3,
+                                _gfdb_log_level (GF_LOG_ERROR,
+                                        gfdb_db_record->ignore_errors),
+                                0, LG_MSG_UPDATE_FAILED,
+                                "Failed updating link flags in unwind");
                         goto out;
                 }
         }
@@ -972,15 +994,15 @@ gf_sql_update_delete_wind (gf_sql_connection_t  *sql_conn,
 
         gfid_str = gf_strdup (uuid_utoa(gfdb_db_record->gfid));
         if (!gfid_str) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                        LG_MSG_CREATE_FAILED, "Creating gfid string failed.");
+                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_CREATE_FAILED,
+                        "Creating gfid string failed.");
                 goto out;
         }
 
         pargfid_str = gf_strdup (uuid_utoa(gfdb_db_record->pargfid));
         if (!pargfid_str) {
-                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                LG_MSG_CREATE_FAILED, "Creating pargfid_str "
+                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR,
+                                0, LG_MSG_CREATE_FAILED, "Creating pargfid_str "
                                 "string failed.");
                         goto out;
         }
@@ -988,10 +1010,13 @@ gf_sql_update_delete_wind (gf_sql_connection_t  *sql_conn,
         if (gfdb_db_record->link_consistency) {
                 ret = gf_sql_update_link_flags (sql_conn, gfid_str, pargfid_str,
                                         gfdb_db_record->file_name, 1,
-                                        _gf_false);
+                                        _gf_false,
+                                        gfdb_db_record->ignore_errors);
                 if (ret) {
-                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                LG_MSG_UPDATE_FAILED,
+                        gf_msg (GFDB_STR_SQLITE3,
+                                _gfdb_log_level (GF_LOG_ERROR,
+                                        gfdb_db_record->ignore_errors),
+                                0, LG_MSG_UPDATE_FAILED,
                                 "Failed updating link flags in wind");
                         goto out;
                 }
@@ -1018,22 +1043,23 @@ gf_sql_delete_unwind (gf_sql_connection_t  *sql_conn,
 
         gfid_str = gf_strdup (uuid_utoa(gfdb_db_record->gfid));
         if (!gfid_str) {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                        LG_MSG_CREATE_FAILED, "Creating gfid string failed.");
+                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_CREATE_FAILED,
+                        "Creating gfid string failed.");
                 goto out;
         }
 
         /*Nuke all the entries for this GFID from DB*/
         if (gfdb_db_record->gfdb_fop_path == GFDB_FOP_UNDEL_ALL) {
-                gf_sql_delete_all(sql_conn, gfid_str);
+                gf_sql_delete_all (sql_conn, gfid_str,
+                                gfdb_db_record->ignore_errors);
         }
         /*Remove link entries only*/
         else if (gfdb_db_record->gfdb_fop_path == GFDB_FOP_UNDEL) {
 
                 pargfid_str = gf_strdup(uuid_utoa(gfdb_db_record->pargfid));
                 if (!pargfid_str) {
-                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                LG_MSG_CREATE_FAILED, "Creating pargfid_str "
+                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR,
+                                0, LG_MSG_CREATE_FAILED, "Creating pargfid_str "
                                 "string failed.");
                         goto out;
                 }
@@ -1049,10 +1075,13 @@ gf_sql_delete_unwind (gf_sql_connection_t  *sql_conn,
                         ret = gf_update_time (sql_conn, gfid_str, modtime,
                                 gfdb_db_record->do_record_counters,
                                 _gf_true,
-                                isreadfop (gfdb_db_record->gfdb_fop_type));
+                                isreadfop (gfdb_db_record->gfdb_fop_type),
+                                gfdb_db_record->ignore_errors);
                         if (ret) {
-                                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                        LG_MSG_UPDATE_FAILED,
+                                gf_msg (GFDB_STR_SQLITE3,
+                                        _gfdb_log_level (GF_LOG_ERROR,
+                                                gfdb_db_record->ignore_errors),
+                                        0, LG_MSG_UPDATE_FAILED,
                                         "Failed update wind time in DB");
                                 goto out;
                         }
@@ -1061,7 +1090,8 @@ gf_sql_delete_unwind (gf_sql_connection_t  *sql_conn,
                 modtime = &gfdb_db_record->gfdb_unwind_change_time;
 
                 ret = gf_sql_delete_link(sql_conn, gfid_str, pargfid_str,
-                                        gfdb_db_record->file_name);
+                                        gfdb_db_record->file_name,
+                                        gfdb_db_record->ignore_errors);
                 if (ret) {
                         gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
                                 LG_MSG_DELETE_FAILED, "Failed deleting link");
@@ -1073,17 +1103,20 @@ gf_sql_delete_unwind (gf_sql_connection_t  *sql_conn,
                         ret = gf_update_time (sql_conn, gfid_str, modtime,
                                 gfdb_db_record->do_record_counters,
                                 _gf_false,
-                                isreadfop(gfdb_db_record->gfdb_fop_type));
+                                isreadfop(gfdb_db_record->gfdb_fop_type),
+                                gfdb_db_record->ignore_errors);
                         if (ret) {
-                                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                        LG_MSG_UPDATE_FAILED, "Failed update "
-                                        "unwind time in DB");
+                                gf_msg (GFDB_STR_SQLITE3,
+                                        _gfdb_log_level (GF_LOG_ERROR,
+                                                gfdb_db_record->ignore_errors),
+                                        0, LG_MSG_UPDATE_FAILED,
+                                        "Failed update unwind time in DB");
                                 goto out;
                         }
                 }
         } else {
-                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                        LG_MSG_INVALID_UPLINK, "Invalid unlink option");
+                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR,
+                        0, LG_MSG_INVALID_UPLINK, "Invalid unlink option");
                 goto out;
         }
         ret = 0;
@@ -1103,68 +1136,173 @@ gf_sql_query_function (sqlite3_stmt              *prep_stmt,
                       gf_query_callback_t       query_callback,
                       void                      *_query_cbk_args)
 {
-        int ret = -1;
-        gfdb_query_record_t *gfdb_query_record = NULL;
-        char *text_column = NULL;
-        sqlite3 *db_conn = NULL;
+        int ret                                         = -1;
+        gfdb_query_record_t *query_record               = NULL;
+        char *text_column                               = NULL;
+        sqlite3 *db_conn                                = NULL;
+        uuid_t  prev_gfid                               = {0};
+        uuid_t  curr_gfid                               = {0};
+        uuid_t  pgfid                                   = {0};
+        char *base_name                                 = NULL;
+        gf_boolean_t is_first_record                    = _gf_true;
+        gf_boolean_t is_query_empty                     = _gf_true;
 
         GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, prep_stmt, out);
         GF_VALIDATE_OR_GOTO (GFDB_STR_SQLITE3, query_callback, out);
 
         db_conn = sqlite3_db_handle(prep_stmt);
 
-        gfdb_query_record = gfdb_query_record_init ();
-        if (!gfdb_query_record) {
-                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                LG_MSG_CREATE_FAILED, "Failed to create "
-                                "gfdb_query_record");
-                                goto out;
-        }
-
-        /*Loop to access queried rows*/
+        /*
+         * Loop to access queried rows
+         * Each db record will have 3 columns
+         * GFID, PGFID, FILE_NAME
+         *
+         * For file with multiple hard links we will get multiple query rows
+         * with the same GFID, but different PGID and FILE_NAME Combination
+         * For Example if a file with
+         *         GFID = 00000000-0000-0000-0000-000000000006
+         * has 3 hardlinks file1, file2 and file3 in 3 different folder
+         * with GFID's
+         * 00000000-0000-0000-0000-0000EFC00001,
+         * 00000000-0000-0000-0000-00000ABC0001 and
+         * 00000000-0000-0000-0000-00000ABC00CD
+         * Then there will be 3 records
+         *         GFID         : 00000000-0000-0000-0000-000000000006
+         *         PGFID        : 00000000-0000-0000-0000-0000EFC00001
+         *         FILE_NAME    : file1
+         *
+         *         GFID         : 00000000-0000-0000-0000-000000000006
+         *         PGFID        : 00000000-0000-0000-0000-00000ABC0001
+         *         FILE_NAME    : file2
+         *
+         *         GFID         : 00000000-0000-0000-0000-000000000006
+         *         PGFID        : 00000000-0000-0000-0000-00000ABC00CD
+         *         FILE_NAME    : file3
+         *
+         * This is retrieved and added to a single query_record
+         *
+         * query_record->gfid = 00000000-0000-0000-0000-000000000006
+         *                  ->link_info = {00000000-0000-0000-0000-0000EFC00001,
+         *                                 "file1"}
+         *                                  |
+         *                                  V
+         *             link_info = {00000000-0000-0000-0000-00000ABC0001,
+         *                                 "file2"}
+         *                                  |
+         *                                  V
+         *             link_info = {00000000-0000-0000-0000-00000ABC0001,
+         *                                 "file3",
+         *                                 list}
+         *
+         * This query record is sent to the registered query_callback()
+         *
+         * */
         while ((ret = sqlite3_step (prep_stmt)) == SQLITE_ROW) {
-
-                /*Clear the query record*/
-                memset (gfdb_query_record, 0, sizeof(*gfdb_query_record));
 
                 if (sqlite3_column_count(prep_stmt) > 0) {
 
-                        /*Retriving GFID - column index is 0*/
+                        is_query_empty = _gf_false;
+
+                        /*Retrieving GFID - column index is 0*/
                         text_column = (char *)sqlite3_column_text
                                                         (prep_stmt, 0);
                         if (!text_column) {
                                 gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                        LG_MSG_GET_ID_FAILED, "Failed "
-                                        "retriving GF_ID");
+                                        LG_MSG_GET_ID_FAILED, "Failed to"
+                                        "retrieve GFID");
                                 goto out;
                         }
-                        ret = gf_uuid_parse (text_column, gfdb_query_record->gfid);
+                        ret = gf_uuid_parse (text_column, curr_gfid);
                         if (ret) {
                                 gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                        LG_MSG_PARSE_FAILED, "Failed parsing "
+                                        LG_MSG_PARSE_FAILED, "Failed to parse "
+                                        "GFID");
+                                goto out;
+                        }
+
+                        /*
+                         * if the previous record was not of the current gfid
+                         * call the call_back function and send the
+                         * query record, which will have all the link_info
+                         * objects associated with this gfid
+                         *
+                         * */
+                        if (gf_uuid_compare (curr_gfid, prev_gfid) != 0) {
+
+                                /* If this is not the first record */
+                                if (!is_first_record) {
+                                        /*Call the call_back function provided*/
+                                        ret = query_callback (query_record,
+                                                        _query_cbk_args);
+                                        if (ret) {
+                                                gf_msg (GFDB_STR_SQLITE3,
+                                                        GF_LOG_ERROR, 0,
+                                                LG_MSG_QUERY_CALL_BACK_FAILED,
+                                                        "Query call back "
+                                                        "failed");
+                                                goto out;
+                                        }
+
+                                }
+
+                                /*Clear the query record*/
+                                gfdb_query_record_free (query_record);
+                                query_record = NULL;
+                                query_record = gfdb_query_record_new ();
+                                if (!query_record) {
+                                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR,
+                                                0, LG_MSG_CREATE_FAILED,
+                                                "Failed to create "
+                                                "query_record");
+                                        goto out;
+                                }
+
+                                gf_uuid_copy(query_record->gfid,
+                                                                curr_gfid);
+                                gf_uuid_copy(prev_gfid, curr_gfid);
+
+                        }
+
+                        /* Get PGFID */
+                        text_column = (char *)sqlite3_column_text
+                                                        (prep_stmt, 1);
+                        if (!text_column) {
+                                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
+                                        LG_MSG_GET_ID_FAILED, "Failed to"
+                                        " retrieve GF_ID");
+                                goto out;
+                        }
+                        ret = gf_uuid_parse (text_column, pgfid);
+                        if (ret) {
+                                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
+                                        LG_MSG_PARSE_FAILED, "Failed to parse "
                                         "GF_ID");
                                 goto out;
                         }
 
-                        /*Retrive Link Buffer - column index 1*/
+                        /* Get Base name */
                         text_column = (char *)sqlite3_column_text
-                                                (prep_stmt, 1);
-                        /* Get link string. Do shallow copy here
-                         * query_callback function should do a
-                         * deep copy and then do operations on this field*/
-                        gfdb_query_record->_link_info_str = text_column;
-                        gfdb_query_record->link_info_size = strlen
-                                                                (text_column);
-
-                        /* Call the call back function provided*/
-                        ret = query_callback (gfdb_query_record,
-                                                        _query_cbk_args);
-                        if (ret) {
+                                                        (prep_stmt, 2);
+                        if (!text_column) {
                                 gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                                        LG_MSG_QUERY_CALL_BACK_FAILED,
-                                        "Query Call back failed!");
+                                        LG_MSG_GET_ID_FAILED, "Failed to"
+                                        " retrieve GF_ID");
                                 goto out;
                         }
+                        base_name = text_column;
+
+
+                        /* Add link info to the list */
+                        ret = gfdb_add_link_to_query_record (query_record,
+                                                         pgfid, base_name);
+                        if (ret) {
+                                gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
+                                        LG_MSG_GET_ID_FAILED, "Failed to"
+                                        " add link info to query record");
+                                goto out;
+                        }
+
+                        is_first_record = _gf_false;
 
                 }
 
@@ -1172,15 +1310,31 @@ gf_sql_query_function (sqlite3_stmt              *prep_stmt,
 
         if (ret != SQLITE_DONE) {
                 gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
-                        LG_MSG_GET_RECORD_FAILED, "Failed retriving records "
+                        LG_MSG_GET_RECORD_FAILED, "Failed to retrieve records "
                         "from db : %s", sqlite3_errmsg (db_conn));
                 ret = -1;
                 goto out;
         }
 
+
+        if (!is_query_empty) {
+                /*
+                 * Call the call_back function for the last record from the
+                 * Database
+                 * */
+                ret = query_callback (query_record, _query_cbk_args);
+                if (ret) {
+                        gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0,
+                                LG_MSG_QUERY_CALL_BACK_FAILED,
+                                "Query call back failed");
+                        goto out;
+                }
+        }
+
         ret = 0;
 out:
-        gfdb_query_record_fini (&gfdb_query_record);
+        gfdb_query_record_free (query_record);
+        query_record = NULL;
         return ret;
 }
 
@@ -1204,7 +1358,7 @@ gf_sql_clear_counters (gf_sql_connection_t *sql_conn)
                                 &sql_strerror);
         if (ret != SQLITE_OK) {
                 gf_msg (GFDB_STR_SQLITE3, GF_LOG_ERROR, 0, LG_MSG_EXEC_FAILED,
-                        "Failed executing: %s : %s",
+                        "Failed to execute: %s : %s",
                         query_str, sql_strerror);
                 sqlite3_free (sql_strerror);
                         ret = -1;

@@ -80,6 +80,7 @@ fill_defaults (xlator_t *xl)
 	SET_DEFAULT_FOP (discard);
         SET_DEFAULT_FOP (zerofill);
         SET_DEFAULT_FOP (ipc);
+        SET_DEFAULT_FOP (seek);
 
         SET_DEFAULT_FOP (getspec);
 
@@ -123,7 +124,12 @@ xlator_volopt_dynload (char *xlator_type, void **dl_handle,
 
         GF_VALIDATE_OR_GOTO ("xlator", xlator_type, out);
 
-        ret = gf_asprintf (&name, "%s/%s.so", XLATORDIR, xlator_type);
+        /* socket.so doesn't fall under the default xlator directory, hence we
+         * need this check */
+        if (!strstr(xlator_type, "rpc-transport"))
+                ret = gf_asprintf (&name, "%s/%s.so", XLATORDIR, xlator_type);
+        else
+                ret = gf_asprintf (&name, "%s/%s.so", XLATORPARENTDIR, xlator_type);
         if (-1 == ret) {
                 goto out;
         }
@@ -409,6 +415,7 @@ xlator_init (xlator_t *xl)
         if (xl->mem_acct_init)
                 xl->mem_acct_init (xl);
 
+        xl->instance_name = NULL;
         if (!xl->init) {
                 gf_msg (xl->name, GF_LOG_WARNING, 0, LG_MSG_INIT_FAILED,
                         "No init() found");

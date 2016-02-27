@@ -30,6 +30,13 @@
 #define CTR_DEFAULT_HARDLINK_EXP_PERIOD 300  /* Five mins */
 #define CTR_DEFAULT_INODE_EXP_PERIOD    300 /* Five mins */
 
+
+typedef struct ctr_query_cbk_args {
+        int query_fd;
+        int count;
+} ctr_query_cbk_args_t;
+
+
 /*CTR Xlator Private structure*/
 typedef struct gf_ctr_private {
         gf_boolean_t                    enabled;
@@ -38,12 +45,13 @@ typedef struct gf_ctr_private {
         gf_boolean_t                    ctr_record_wind;
         gf_boolean_t                    ctr_record_unwind;
         gf_boolean_t                    ctr_record_counter;
+        gf_boolean_t                    ctr_record_metadata_heat;
         gf_boolean_t                    ctr_link_consistency;
         gfdb_db_type_t                  gfdb_db_type;
         gfdb_sync_type_t                gfdb_sync_type;
         gfdb_conn_node_t                *_db_conn;
-        uint64_t                        ctr_hardlink_heal_expire_period;
-        uint64_t                        ctr_inode_heal_expire_period;
+        uint64_t                        ctr_lookupheal_link_timeout;
+        uint64_t                        ctr_lookupheal_inode_timeout;
 } gf_ctr_private_t;
 
 
@@ -71,7 +79,7 @@ typedef struct gf_ctr_local {
         gfdb_db_record_t        gfdb_db_record;
         ia_type_t               ia_inode_type;
         gf_boolean_t            is_internal_fop;
-        gf_client_pid_t          client_pid;
+        gf_client_pid_t         client_pid;
 } gf_ctr_local_t;
 /*
  * Easy access of gfdb_db_record of ctr_local
@@ -89,8 +97,8 @@ do {\
                 0, sizeof(gfdb_time_t));\
         gf_uuid_clear (ctr_local->gfdb_db_record.gfid);\
         gf_uuid_clear (ctr_local->gfdb_db_record.pargfid);\
-        memset(ctr_local->gfdb_db_record.file_name, 0, PATH_MAX);\
-        memset(ctr_local->gfdb_db_record.old_file_name, 0, PATH_MAX);\
+        memset(ctr_local->gfdb_db_record.file_name, 0, GF_NAME_MAX + 1);\
+        memset(ctr_local->gfdb_db_record.old_file_name, 0, GF_NAME_MAX + 1);\
         ctr_local->gfdb_db_record.gfdb_fop_type = GFDB_FOP_INVALID_OP;\
         ctr_local->ia_inode_type = IA_INVAL;\
 } while (0)
@@ -151,19 +159,20 @@ free_ctr_local (gf_ctr_local_t *ctr_local)
 typedef struct gf_ctr_link_context {
         uuid_t                  *pargfid;
         const char              *basename;
-        /*basepath is redundent. Will go off*/
-        const char              *basepath;
 } gf_ctr_link_context_t;
 
  /*Context Carrier Structure for inodes*/
 typedef struct gf_ctr_inode_context {
         ia_type_t               ia_type;
         uuid_t                  *gfid;
+        uuid_t                  *old_gfid;
         gf_ctr_link_context_t   *new_link_cx;
         gf_ctr_link_context_t   *old_link_cx;
         gfdb_fop_type_t         fop_type;
         gfdb_fop_path_t         fop_path;
         gf_boolean_t            is_internal_fop;
+        /* Indicating metadata fops */
+        gf_boolean_t            is_metadata_fop;
 } gf_ctr_inode_context_t;
 
 
@@ -176,21 +185,18 @@ do {\
                 if (ctr_link_cx->pargfid)\
                         GF_ASSERT (*(ctr_link_cx->pargfid));\
                 GF_ASSERT (ctr_link_cx->basename);\
-                GF_ASSERT (ctr_link_cx->basepath);\
         };\
 } while (0)
 
 /*Clear and fill the ctr_link_context with values*/
-#define FILL_CTR_LINK_CX(ctr_link_cx, _pargfid, _basename, _basepath, label)\
+#define FILL_CTR_LINK_CX(ctr_link_cx, _pargfid, _basename, label)\
 do {\
         GF_VALIDATE_OR_GOTO ("ctr", ctr_link_cx, label);\
         GF_VALIDATE_OR_GOTO ("ctr", _pargfid, label);\
         GF_VALIDATE_OR_GOTO ("ctr", _basename, label);\
-        GF_VALIDATE_OR_GOTO ("ctr", _basepath, label);\
         memset (ctr_link_cx, 0, sizeof (*ctr_link_cx));\
         ctr_link_cx->pargfid = &_pargfid;\
         ctr_link_cx->basename = _basename;\
-        ctr_link_cx->basepath = _basepath;\
 } while (0)
 
 #define NEW_LINK_CX(ctr_inode_cx)\
@@ -220,10 +226,10 @@ do {\
                                 _fop_type,\
                                 _fop_path)\
 do {\
-        GF_ASSERT(ctr_inode_cx);\
-        GF_ASSERT(_gfid);\
-        GF_ASSERT(_fop_type != GFDB_FOP_INVALID_OP);\
-        GF_ASSERT(_fop_path != GFDB_FOP_INVALID);\
+        GF_ASSERT (ctr_inode_cx);\
+        GF_ASSERT (_gfid);\
+        GF_ASSERT (_fop_type != GFDB_FOP_INVALID_OP);\
+        GF_ASSERT (_fop_path != GFDB_FOP_INVALID);\
         memset(ctr_inode_cx, 0, sizeof(*ctr_inode_cx));\
         ctr_inode_cx->ia_type = _ia_type;\
         ctr_inode_cx->gfid = &_gfid;\
@@ -237,12 +243,82 @@ do {\
         ctr_inode_cx->fop_path = _fop_path;\
 } while (0)
 
+
 /******************************************************************************
  *
  *                      Util functions or macros used by
  *                      insert wind and insert unwind
  *
  * ****************************************************************************/
+/* Free ctr frame local */
+static inline void
+ctr_free_frame_local (call_frame_t *frame) {
+        if (frame) {
+                free_ctr_local ((gf_ctr_local_t *) frame->local);
+                frame->local = NULL;
+        }
+}
+
+/* Setting GF_REQUEST_LINK_COUNT_XDATA in dict
+ * that has to be sent to POSIX Xlator to send
+ * link count in unwind path.
+ * return 0 for success with not creation of dict
+ * return 1 for success with creation of dict
+ * return -1 for failure.
+ * */
+static inline int
+set_posix_link_request (xlator_t        *this,
+                        dict_t          **xdata)
+{
+        int ret                         = -1;
+        gf_boolean_t is_created         = _gf_false;
+
+        GF_VALIDATE_OR_GOTO ("ctr", this, out);
+        GF_VALIDATE_OR_GOTO (this->name, xdata, out);
+
+        /*create xdata if NULL*/
+        if (!*xdata) {
+                *xdata = dict_new();
+                is_created = _gf_true;
+                ret = 1;
+        } else {
+                ret = 0;
+        }
+
+        if (!*xdata) {
+                gf_msg (this->name, GF_LOG_ERROR, 0, CTR_MSG_XDATA_NULL,
+                        "xdata is NULL :Cannot send "
+                        "GF_REQUEST_LINK_COUNT_XDATA to posix");
+                ret = -1;
+                goto out;
+        }
+
+        ret = dict_set_int32 (*xdata, GF_REQUEST_LINK_COUNT_XDATA, 1);
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_SET_CTR_RESPONSE_LINK_COUNT_XDATA_FAILED,
+                        "Failed setting GF_REQUEST_LINK_COUNT_XDATA");
+                ret = -1;
+                goto out;
+        }
+        ret = 0;
+out:
+        if (ret == -1) {
+                if (*xdata && is_created) {
+                        dict_unref (*xdata);
+                }
+        }
+        return ret;
+}
+
+
+/*
+ * If a bitrot fop
+ * */
+#define BITROT_FOP(frame)\
+        (frame->root->pid == GF_CLIENT_PID_BITD ||\
+        frame->root->pid == GF_CLIENT_PID_SCRUB)
+
 
 /*
  * If a rebalancer fop
@@ -260,7 +336,7 @@ do {\
  * If its a AFR SELF HEAL
  * */
  #define AFR_SELF_HEAL_FOP(frame)\
-        (frame->root->pid == GF_CLIENT_PID_AFR_SELF_HEALD)
+        (frame->root->pid == GF_CLIENT_PID_SELF_HEALD)
 
 /*
  * if a rebalancer fop goto
@@ -275,24 +351,49 @@ do {\
  * Internal fop
  *
  * */
-#define CTR_IS_INTERNAL_FOP(frame, dict)\
-        (AFR_SELF_HEAL_FOP (frame) \
-        || REBALANCE_FOP (frame) \
-        || TIER_REBALANCE_FOP (frame) \
-        || (dict && \
-        dict_get (dict, GLUSTERFS_INTERNAL_FOP_KEY)))
+static inline gf_boolean_t
+is_internal_fop (call_frame_t *frame,
+                              dict_t       *xdata)
+{
+        gf_boolean_t ret = _gf_false;
 
-/**
- * ignore internal fops for all clients except AFR self-heal daemon
- */
+        GF_ASSERT(frame);
+        GF_ASSERT(frame->root);
+
+        if (AFR_SELF_HEAL_FOP (frame)) {
+                ret = _gf_true;
+        }
+        if (BITROT_FOP (frame)) {
+                ret = _gf_true;
+        }
+        if (REBALANCE_FOP (frame) || TIER_REBALANCE_FOP (frame)) {
+                ret = _gf_true;
+                if (xdata && dict_get (xdata, CTR_ATTACH_TIER_LOOKUP)) {
+                        ret = _gf_false;
+                }
+        }
+        if (xdata && dict_get (xdata, GLUSTERFS_INTERNAL_FOP_KEY)) {
+                ret = _gf_true;
+        }
+
+        return ret;
+}
+
 #define CTR_IF_INTERNAL_FOP_THEN_GOTO(frame, dict, label)\
 do {\
-        GF_ASSERT(frame);\
-        GF_ASSERT(frame->root);\
-        if (CTR_IS_INTERNAL_FOP(frame, dict)) \
+        if (is_internal_fop (frame, dict)) \
                         goto label; \
 } while (0)
 
+/* if fop has failed exit */
+#define CTR_IF_FOP_FAILED_THEN_GOTO(this, op_ret, op_errno, label)\
+do {\
+        if (op_ret == -1) {\
+                gf_msg_trace (this->name, 0, "Failed fop with %s",\
+                              strerror (op_errno));\
+                goto label;\
+        };\
+} while (0)
 
 /*
  * IS CTR Xlator is disabled then goto to label
@@ -304,6 +405,19 @@ do {\
         GF_ASSERT (this->private);\
         _priv = this->private;\
         if (!_priv->enabled)\
+                goto label;\
+ } while (0)
+
+/*
+ * IS CTR record metadata heat is disabled then goto to label
+ * */
+ #define CTR_RECORD_METADATA_HEAT_IS_DISABLED_THEN_GOTO(this, label)\
+ do {\
+        gf_ctr_private_t *_priv = NULL;\
+        GF_ASSERT (this);\
+        GF_ASSERT (this->private);\
+        _priv = this->private;\
+        if (!_priv->ctr_record_metadata_heat)\
                 goto label;\
  } while (0)
 
@@ -325,6 +439,7 @@ fill_db_record_for_wind (xlator_t                *this,
  * This function creates ctr_local structure into the frame of the fop
  * call.
  * ****************************************************************************/
+
 static inline int
 ctr_insert_wind (call_frame_t                    *frame,
                 xlator_t                        *this,
@@ -359,16 +474,41 @@ ctr_insert_wind (call_frame_t                    *frame,
                 ctr_local->is_internal_fop = ctr_inode_cx->is_internal_fop;
 
                 /* Decide whether to record counters or not */
-                CTR_DB_REC(ctr_local).do_record_counters =
-                                                _priv->ctr_record_counter &&
-                                                !(ctr_local->is_internal_fop);
+                CTR_DB_REC(ctr_local).do_record_counters = _gf_false;
+                /* If record counter is enabled */
+                if (_priv->ctr_record_counter) {
+                        /* If not a internal fop */
+                        if (!(ctr_local->is_internal_fop)) {
+                                /* If its a metadata fop AND
+                                 * record metadata heat
+                                 * OR
+                                 * its NOT a metadata fop */
+                                if ((ctr_inode_cx->is_metadata_fop
+                                        && _priv->ctr_record_metadata_heat)
+                                        ||
+                                        (!ctr_inode_cx->is_metadata_fop)) {
+                                        CTR_DB_REC(ctr_local).do_record_counters
+                                                = _gf_true;
+                                }
+                        }
+                }
 
                 /* Decide whether to record times or not
                  * For non internal FOPS record times as usual*/
+                CTR_DB_REC(ctr_local).do_record_times = _gf_false;
                 if (!ctr_local->is_internal_fop) {
-                        CTR_DB_REC(ctr_local).do_record_times =
-                                                (_priv->ctr_record_wind
-                                                || _priv->ctr_record_unwind);
+                        /* If its a metadata fop AND
+                        * record metadata heat
+                        * OR
+                        * its NOT a metadata fop */
+                        if ((ctr_inode_cx->is_metadata_fop &&
+                                _priv->ctr_record_metadata_heat)
+                                ||
+                                (!ctr_inode_cx->is_metadata_fop)) {
+                                CTR_DB_REC(ctr_local).do_record_times =
+                                        (_priv->ctr_record_wind
+                                        || _priv->ctr_record_unwind);
+                        }
                 }
                 /* when its a internal FOPS*/
                 else {
@@ -466,8 +606,60 @@ ctr_insert_unwind (call_frame_t          *frame,
         }
         ret = 0;
 out:
-        free_ctr_local (ctr_local);
-        frame->local = NULL;
+        return ret;
+}
+
+/******************************************************************************
+ *                          Delete file/flink record/s from db
+ * ****************************************************************************/
+static inline int
+ctr_delete_hard_link_from_db (xlator_t               *this,
+                              uuid_t                 gfid,
+                              uuid_t                 pargfid,
+                              char                   *basename,
+                              gfdb_fop_type_t        fop_type,
+                              gfdb_fop_path_t        fop_path)
+{
+        int                     ret                = -1;
+        gfdb_db_record_t        gfdb_db_record;
+        gf_ctr_private_t        *_priv             = NULL;
+
+        _priv = this->private;
+        GF_VALIDATE_OR_GOTO (this->name, _priv, out);
+        GF_VALIDATE_OR_GOTO (this->name, (!gf_uuid_is_null (gfid)), out);
+        GF_VALIDATE_OR_GOTO (this->name, (!gf_uuid_is_null (pargfid)), out);
+        GF_VALIDATE_OR_GOTO (this->name, (fop_type == GFDB_FOP_DENTRY_WRITE),
+                             out);
+        GF_VALIDATE_OR_GOTO (this->name,
+                             (fop_path == GFDB_FOP_UNDEL || GFDB_FOP_UNDEL_ALL),
+                             out);
+
+        /* Set gfdb_db_record to 0 */
+        memset (&gfdb_db_record, 0, sizeof(gfdb_db_record));
+
+        /* Copy gfid into db record */
+        gf_uuid_copy (gfdb_db_record.gfid, gfid);
+
+        /* Copy pargid into db record */
+        gf_uuid_copy (gfdb_db_record.pargfid, pargfid);
+
+        /* Copy basename */
+        strncpy (gfdb_db_record.file_name, basename, GF_NAME_MAX - 1);
+
+        gfdb_db_record.gfdb_fop_path = fop_path;
+        gfdb_db_record.gfdb_fop_type = fop_type;
+
+        /*send delete request to db*/
+        ret = insert_record (_priv->_db_conn, &gfdb_db_record);
+        if (ret) {
+                gf_msg (this->name, GF_LOG_ERROR, 0,
+                        CTR_MSG_INSERT_RECORD_WIND_FAILED,
+                        "Failed to delete record. %s", basename);
+                goto out;
+        }
+
+        ret = 0;
+out:
         return ret;
 }
 
@@ -488,7 +680,7 @@ __is_inode_expired (ctr_xlator_ctx_t *ctr_xlator_ctx,
         time_diff = current_time->tv_sec -
                         ctr_xlator_ctx->inode_heal_period;
 
-        ret = (time_diff >= _priv->ctr_inode_heal_expire_period) ?
+        ret = (time_diff >= _priv->ctr_lookupheal_inode_timeout) ?
                         _gf_true : _gf_false;
         return ret;
 }
@@ -508,7 +700,7 @@ __is_hardlink_expired (ctr_hard_link_t *ctr_hard_link,
         time_diff = current_time->tv_sec -
                         ctr_hard_link->hardlink_heal_period;
 
-        ret = ret || (time_diff >= _priv->ctr_hardlink_heal_expire_period) ?
+        ret = ret || (time_diff >= _priv->ctr_lookupheal_link_timeout) ?
                         _gf_true : _gf_false;
 
         return ret;

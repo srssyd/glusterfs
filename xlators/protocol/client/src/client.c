@@ -50,7 +50,7 @@ out:
         return 0;
 }
 
-static int
+int
 client_notify_dispatch_uniq (xlator_t *this, int32_t event, void *data, ...)
 {
         clnt_conf_t     *conf = this->private;
@@ -228,8 +228,6 @@ client_submit_request (xlator_t *this, void *req, call_frame_t *frame,
         struct iobref  *new_iobref = NULL;
         ssize_t         xdr_size   = 0;
         struct rpc_req  rpcreq     = {0, };
-        uint64_t        ngroups    = 0;
-        uint64_t        gid        = 0;
 
         GF_VALIDATE_OR_GOTO ("client", this, out);
         GF_VALIDATE_OR_GOTO (this->name, prog, out);
@@ -300,14 +298,11 @@ client_submit_request (xlator_t *this, void *req, call_frame_t *frame,
 
         /* do not send all groups if they are resolved server-side */
         if (!conf->send_gids) {
-                /* copy some values for restoring later */
-                ngroups = frame->root->ngrps;
-                frame->root->ngrps = 1;
-                if (ngroups <= SMALL_GROUP_COUNT) {
-                        gid = frame->root->groups_small[0];
+                if (frame->root->ngrps <= SMALL_GROUP_COUNT) {
                         frame->root->groups_small[0] = frame->root->gid;
                         frame->root->groups = frame->root->groups_small;
                 }
+                frame->root->ngrps = 1;
         }
 
         /* Send the msg */
@@ -317,13 +312,6 @@ client_submit_request (xlator_t *this, void *req, call_frame_t *frame,
 
         if (ret < 0) {
                 gf_msg_debug (this->name, 0, "rpc_clnt_submit failed");
-        }
-
-        if (!conf->send_gids) {
-                /* restore previous values */
-                frame->root->ngrps = ngroups;
-                if (ngroups <= SMALL_GROUP_COUNT)
-                        frame->root->groups_small[0] = gid;
         }
 
         ret = 0;
@@ -1906,6 +1894,35 @@ out:
 
 
 int32_t
+client_seek (call_frame_t *frame, xlator_t *this, fd_t *fd, off_t offset,
+             gf_seek_what_t what, dict_t *xdata)
+{
+        int          ret              = -1;
+        clnt_conf_t *conf             = NULL;
+        rpc_clnt_procedure_t *proc    = NULL;
+        clnt_args_t  args             = {0,};
+
+        conf = this->private;
+        if (!conf || !conf->fops)
+                goto out;
+
+        args.fd = fd;
+        args.offset = offset;
+        args.what = what;
+        args.xdata = xdata;
+
+        proc = &conf->fops->proctable[GF_FOP_SEEK];
+        if (proc->fn)
+                ret = proc->fn (frame, this, &args);
+out:
+        if (ret)
+                STACK_UNWIND_STRICT(seek, frame, -1, ENOTCONN, 0, NULL);
+
+        return 0;
+}
+
+
+int32_t
 client_getspec (call_frame_t *frame, xlator_t *this, const char *key,
                 int32_t flags)
 {
@@ -1981,27 +1998,14 @@ client_rpc_notify (struct rpc_clnt *rpc, void *mydata, rpc_clnt_event_t event,
         {
                 conf->connected = 1;
                 // connect happened, send 'get_supported_versions' mop
-                ret = dict_get_str (this->options, "disable-handshake",
-                                    &handshake);
 
                 gf_msg_debug (this->name, 0, "got RPC_CLNT_CONNECT");
 
-                if ((ret < 0) || (strcasecmp (handshake, "on"))) {
-                        ret = client_handshake (this, rpc);
-                        if (ret)
-                                gf_msg (this->name, GF_LOG_WARNING, 0,
-                                        PC_MSG_HANDSHAKE_RETURN, "handshake "
-                                        "msg returned %d", ret);
-                } else {
-                        //conf->rpc->connected = 1;
-                        ret = client_notify_dispatch_uniq (this,
-                                                           GF_EVENT_CHILD_UP,
-                                                           NULL);
-                        if (ret)
-                                gf_msg (this->name, GF_LOG_INFO, 0,
-                                        PC_MSG_CHILD_UP_NOTIFY_FAILED,
-                                        "CHILD_UP notify failed");
-                }
+                ret = client_handshake (this, rpc);
+                if (ret)
+                        gf_msg (this->name, GF_LOG_WARNING, 0,
+                                PC_MSG_HANDSHAKE_RETURN, "handshake "
+                                "msg returned %d", ret);
 
                 /* Cancel grace timer if set */
                 pthread_mutex_lock (&conf->lock);
@@ -2713,6 +2717,7 @@ struct xlator_fops fops = {
         .zerofill    = client_zerofill,
         .getspec     = client_getspec,
         .ipc         = client_ipc,
+        .seek        = client_seek,
 };
 
 

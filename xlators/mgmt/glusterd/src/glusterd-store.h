@@ -41,6 +41,7 @@ typedef enum glusterd_store_ver_ac_{
 #define GLUSTERD_STORE_KEY_VOL_REPLICA_CNT      "replica_count"
 #define GLUSTERD_STORE_KEY_VOL_DISPERSE_CNT     "disperse_count"
 #define GLUSTERD_STORE_KEY_VOL_REDUNDANCY_CNT   "redundancy_count"
+#define GLUSTERD_STORE_KEY_VOL_ARBITER_CNT      "arbiter_count"
 #define GLUSTERD_STORE_KEY_VOL_BRICK            "brick"
 #define GLUSTERD_STORE_KEY_VOL_VERSION          "version"
 #define GLUSTERD_STORE_KEY_VOL_TRANSPORT        "transport-type"
@@ -58,6 +59,7 @@ typedef enum glusterd_store_ver_ac_{
 #define GLUSTERD_STORE_KEY_PARENT_VOLNAME       "parent_volname"
 #define GLUSTERD_STORE_KEY_VOL_OP_VERSION       "op-version"
 #define GLUSTERD_STORE_KEY_VOL_CLIENT_OP_VERSION "client-op-version"
+#define GLUSTERD_STORE_KEY_VOL_QUOTA_VERSION    "quota-version"
 
 #define GLUSTERD_STORE_KEY_COLD_TYPE            "cold_type"
 #define GLUSTERD_STORE_KEY_COLD_COUNT           "cold_count"

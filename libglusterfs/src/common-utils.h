@@ -96,6 +96,10 @@ void trap (void);
 /* Default value of signing waiting time to sign a file for bitrot */
 #define SIGNING_TIMEOUT "120"
 
+/* Shard */
+#define GF_XATTR_SHARD_FILE_SIZE  "trusted.glusterfs.shard.file-size"
+#define SHARD_ROOT_GFID "be318638-e8a0-4c6d-977d-7a937aa84806"
+
 enum _gf_boolean
 {
 	_gf_false = 0,
@@ -117,7 +121,7 @@ enum _gf_client_pid
         GF_CLIENT_PID_DEFRAG            = -3,
         GF_CLIENT_PID_NO_ROOT_SQUASH    = -4,
         GF_CLIENT_PID_QUOTA_MOUNT       = -5,
-        GF_CLIENT_PID_AFR_SELF_HEALD    = -6,
+        GF_CLIENT_PID_SELF_HEALD        = -6,
         GF_CLIENT_PID_GLFS_HEAL         = -7,
         GF_CLIENT_PID_BITD              = -8,
         GF_CLIENT_PID_SCRUB             = -9,
@@ -158,6 +162,33 @@ typedef struct dht_changelog_rename_info {
 
 
 typedef int (*gf_cmp) (void *, void *);
+
+struct _dict;
+
+struct dnscache {
+        struct _dict *cache_dict;
+        time_t ttl;
+};
+
+struct dnscache_entry {
+        char *ip;
+        char *fqdn;
+        time_t timestamp;
+};
+
+struct dnscache6 {
+        struct addrinfo *first;
+        struct addrinfo *next;
+};
+
+
+
+struct dnscache *gf_dnscache_init (time_t ttl);
+struct dnscache_entry *gf_dnscache_entry_init ();
+void gf_dnscache_entry_deinit (struct dnscache_entry *entry);
+char *gf_rev_dns_lookup_cached (const char *ip, struct dnscache *dnscache);
+
+char *gf_resolve_path_parent (const char *path);
 
 void gf_global_variable_init(void);
 
@@ -334,6 +365,8 @@ union gf_sock_union {
 };
 
 #define GF_HIDDEN_PATH ".glusterfs"
+#define GF_UNLINK_PATH GF_HIDDEN_PATH"/unlink"
+#define GF_LANDFILL_PATH GF_HIDDEN_PATH"/landfill"
 
 #define IOV_MIN(n) min(IOV_MAX,n)
 
@@ -341,11 +374,11 @@ union gf_sock_union {
         do {\
                 entry = NULL;\
                 if (dir) { \
-                        entry = readdir (dir); \
+                        entry = sys_readdir (dir); \
                         while (entry && (!strcmp (entry->d_name, ".") || \
                             !fnmatch ("*.tmp", entry->d_name, 0) || \
                             !strcmp (entry->d_name, ".."))) { \
-                                entry = readdir (dir); \
+                                entry = sys_readdir (dir); \
                         } \
                 } \
         } while (0)
@@ -405,10 +438,12 @@ iov_subset (struct iovec *orig, int orig_count,
 	int    i;
 	off_t  offset = 0;
 	size_t start_offset = 0;
-	size_t end_offset = 0;
+	size_t end_offset = 0, origin_iov_len = 0;
 
 
 	for (i = 0; i < orig_count; i++) {
+                origin_iov_len = orig[i].iov_len;
+
 		if ((offset + orig[i].iov_len < src_offset)
 		    || (offset > dst_offset)) {
 			goto not_subset;
@@ -436,7 +471,7 @@ iov_subset (struct iovec *orig, int orig_count,
 		new_count++;
 
 	not_subset:
-		offset += orig[i].iov_len;
+		offset += origin_iov_len;
 	}
 
 	return new_count;

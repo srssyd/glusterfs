@@ -17,12 +17,13 @@
 #include "marker-common.h"
 #include "byte-order.h"
 #include "syncop.h"
+#include "syscall.h"
 
 #include <fnmatch.h>
 
 #define _GF_UID_GID_CHANGED 1
 
-static char   *quota_external_xattrs[] = {
+static char *mq_ext_xattrs[] = {
         QUOTA_SIZE_KEY,
         QUOTA_LIMIT_KEY,
         QUOTA_LIMIT_OBJECTS_KEY,
@@ -34,6 +35,80 @@ fini (xlator_t *this);
 
 int32_t
 marker_start_setxattr (call_frame_t *, xlator_t *);
+
+/* When client/quotad request for quota xattrs,
+ * replace the key-name by adding the version number
+ * in end of the key-name.
+ * In the cbk, result value of xattrs for original
+ * key-name.
+ * Below function marker_key_replace_with_ver and
+ * marker_key_set_ver is used for setting/removing
+ * version for the key-name
+ */
+int
+marker_key_replace_with_ver (xlator_t *this, dict_t *dict)
+{
+        int                ret                     = -1;
+        int                i                       = 0;
+        marker_conf_t     *priv                    = NULL;
+        char               key[QUOTA_KEY_MAX]      = {0, };
+
+        priv = this->private;
+
+        if (dict == NULL || priv->version <= 0) {
+                ret = 0;
+                goto out;
+        }
+
+        for (i = 0; mq_ext_xattrs[i]; i++) {
+                if (dict_get (dict, mq_ext_xattrs[i])) {
+                        GET_QUOTA_KEY (this, key, mq_ext_xattrs[i], ret);
+                        if (ret < 0)
+                                goto out;
+
+                        ret = dict_set (dict, key,
+                                        dict_get (dict, mq_ext_xattrs[i]));
+                        if (ret < 0)
+                                goto out;
+
+                        dict_del (dict, mq_ext_xattrs[i]);
+                }
+        }
+
+        ret = 0;
+
+out:
+        return ret;
+}
+
+int
+marker_key_set_ver (xlator_t *this, dict_t *dict)
+{
+        int              ret                     = -1;
+        int              i                       = -1;
+        marker_conf_t   *priv                    = NULL;
+        char             key[QUOTA_KEY_MAX]      = {0, };
+
+        priv = this->private;
+
+        if (dict == NULL || priv->version <= 0) {
+                ret = 0;
+                goto out;
+        }
+
+        for (i = 0; mq_ext_xattrs[i]; i++) {
+                GET_QUOTA_KEY (this, key, mq_ext_xattrs[i], ret);
+                if (ret < 0)
+                        goto out;
+
+                if (dict_get (dict, key))
+                        dict_set (dict, mq_ext_xattrs[i], dict_get (dict, key));
+        }
+
+        ret = 0;
+out:
+        return ret;
+}
 
 marker_local_t *
 marker_local_ref (marker_local_t *local)
@@ -178,7 +253,7 @@ marker_error_handler (xlator_t *this, marker_local_t *local, int32_t op_errno)
                  "Indexing gone corrupt at %s (reason: %s)."
                  " Geo-replication slave content needs to be revalidated",
                  path, strerror (op_errno));
-        unlink (priv->timestamp_file);
+        sys_unlink (priv->timestamp_file);
 
         return 0;
 }
@@ -235,7 +310,7 @@ stat_stampfile (xlator_t *this, marker_conf_t *priv,
         GF_ASSERT (sizeof (priv->volume_uuid_bin) == 16);
         memcpy (vol_mark->uuid, priv->volume_uuid_bin, 16);
 
-        if (stat (priv->timestamp_file, &buf) != -1) {
+        if (sys_stat (priv->timestamp_file, &buf) != -1) {
                 vol_mark->retval = 0;
                 vol_mark->sec = htonl (buf.st_mtime);
                 vol_mark->usec = htonl (ST_MTIM_NSEC (&buf)/1000);
@@ -333,10 +408,25 @@ marker_filter_internal_xattrs (xlator_t *this, dict_t *xattrs)
 
         priv = this->private;
         if (priv->feature_enabled & GF_QUOTA)
-                ext = quota_external_xattrs;
+                ext = mq_ext_xattrs;
 
         dict_foreach_match (xattrs, _is_quota_internal_xattr, ext,
                             dict_remove_foreach_fn, NULL);
+}
+
+static void
+marker_filter_gsyncd_xattrs (call_frame_t *frame,
+                               xlator_t *this, dict_t *xattrs)
+{
+        marker_conf_t *priv   = NULL;
+
+        priv = this->private;
+        GF_ASSERT (priv);
+
+        if (frame->root->pid != GF_CLIENT_PID_GSYNCD &&
+            dict_get(xattrs, priv->marker_xattr)) {
+                dict_del (xattrs, priv->marker_xattr);
+        }
         return;
 }
 
@@ -345,6 +435,17 @@ marker_getxattr_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                      int32_t op_ret, int32_t op_errno, dict_t *dict,
                      dict_t *xdata)
 {
+        int32_t     ret  = -1;
+        if (op_ret < 0)
+                goto unwind;
+
+        ret = marker_key_set_ver (this, dict);
+        if (ret < 0) {
+                op_ret = -1;
+                op_errno = ENOMEM;
+                goto unwind;
+        }
+
         if (cookie) {
                 gf_log (this->name, GF_LOG_DEBUG,
                         "Filtering the quota extended attributes");
@@ -370,6 +471,10 @@ marker_getxattr_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                 marker_filter_internal_xattrs (frame->this, dict);
         }
 
+        /* Filter gsyncd xtime xattr for non gsyncd clients */
+        marker_filter_gsyncd_xattrs (frame, frame->this, dict);
+
+unwind:
         MARKER_STACK_UNWIND (getxattr, frame, op_ret, op_errno, dict, xdata);
         return 0;
 }
@@ -378,12 +483,28 @@ int32_t
 marker_getxattr (call_frame_t *frame, xlator_t *this, loc_t *loc,
                  const char *name, dict_t *xdata)
 {
-        gf_boolean_t    is_true  = _gf_false;
-        marker_conf_t   *priv    = NULL;
-        unsigned long   cookie   = 0;
-        marker_local_t  *local   = NULL;
+        gf_boolean_t     is_true  = _gf_false;
+        marker_conf_t   *priv                       = NULL;
+        unsigned long    cookie                     = 0;
+        marker_local_t  *local                      = NULL;
+        char             key[QUOTA_KEY_MAX]         = {0, };
+        int32_t          ret                        = -1;
+        int32_t          i                          = 0;
 
         priv = this->private;
+
+        if (name) {
+                for (i = 0; mq_ext_xattrs[i]; i++) {
+                        if (strcmp (name, mq_ext_xattrs[i]))
+                                continue;
+
+                        GET_QUOTA_KEY (this, key, mq_ext_xattrs[i], ret);
+                        if (ret < 0)
+                                goto out;
+                        name = key;
+                        break;
+                }
+        }
 
         frame->local = mem_get0 (this->local_pool);
         local = frame->local;
@@ -421,7 +542,6 @@ out:
         MARKER_STACK_UNWIND (getxattr, frame, -1, ENOMEM, NULL, NULL);
         return 0;
 }
-
 
 int32_t
 marker_setxattr_done (call_frame_t *frame)
@@ -617,7 +737,7 @@ marker_mkdir_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         priv = this->private;
 
         if (priv->feature_enabled & GF_QUOTA)
-                mq_create_xattrs_txn (this, &local->loc);
+                mq_create_xattrs_txn (this, &local->loc, NULL);
 
         if (priv->feature_enabled & GF_XTIME)
                 marker_xtime_update_marks (this, local);
@@ -692,7 +812,7 @@ marker_create_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         priv = this->private;
 
         if (priv->feature_enabled & GF_QUOTA)
-                mq_create_xattrs_txn (this, &local->loc);
+                mq_create_xattrs_txn (this, &local->loc, buf);
 
         if (priv->feature_enabled & GF_XTIME)
                 marker_xtime_update_marks (this, local);
@@ -763,7 +883,7 @@ marker_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         priv = this->private;
 
         if (priv->feature_enabled & GF_QUOTA)
-                mq_initiate_quota_txn (this, &local->loc);
+                mq_initiate_quota_txn (this, &local->loc, postbuf);
 
         if (priv->feature_enabled & GF_XTIME)
                 marker_xtime_update_marks (this, local);
@@ -838,7 +958,7 @@ marker_rmdir_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         priv = this->private;
 
         if (priv->feature_enabled & GF_QUOTA)
-                mq_reduce_parent_size_txn (this, &local->loc, NULL);
+                mq_reduce_parent_size_txn (this, &local->loc, NULL, 1);
 
         if (priv->feature_enabled & GF_XTIME)
                 marker_xtime_update_marks (this, local);
@@ -887,6 +1007,8 @@ marker_unlink_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 {
         marker_conf_t      *priv    = NULL;
         marker_local_t     *local   = NULL;
+        uint32_t            nlink   = -1;
+        GF_UNUSED int32_t   ret     = 0;
 
         if (op_ret == -1) {
                 gf_log (this->name, GF_LOG_TRACE,
@@ -906,8 +1028,19 @@ marker_unlink_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         priv = this->private;
 
         if (priv->feature_enabled & GF_QUOTA) {
-                if (!local->skip_txn)
-                        mq_reduce_parent_size_txn (this, &local->loc, NULL);
+                if (!local->skip_txn) {
+                        if (xdata) {
+                                ret = dict_get_uint32 (xdata,
+                                        GF_RESPONSE_LINK_COUNT_XDATA, &nlink);
+                                if (ret) {
+                                        gf_log (this->name, GF_LOG_TRACE,
+                                                "dict get failed %s ",
+                                                strerror (-ret));
+                                }
+                        }
+                        mq_reduce_parent_size_txn (this, &local->loc, NULL,
+                                                   nlink);
+                }
         }
 
         if (priv->feature_enabled & GF_XTIME)
@@ -926,6 +1059,7 @@ marker_unlink (call_frame_t *frame, xlator_t *this, loc_t *loc, int xflag,
         int32_t          ret   = 0;
         marker_local_t  *local = NULL;
         marker_conf_t   *priv  = NULL;
+        gf_boolean_t     dict_free = _gf_false;
 
         priv = this->private;
 
@@ -948,12 +1082,26 @@ marker_unlink (call_frame_t *frame, xlator_t *this, loc_t *loc, int xflag,
                 goto unlink_wind;
         }
 
+        if (xdata == NULL) {
+                xdata = dict_new ();
+                dict_free = _gf_true;
+        }
+
+        ret = dict_set_int32 (xdata, GF_REQUEST_LINK_COUNT_XDATA, 1);
+        if (ret < 0)
+                goto err;
+
 unlink_wind:
         STACK_WIND (frame, marker_unlink_cbk, FIRST_CHILD(this),
                     FIRST_CHILD(this)->fops->unlink, loc, xflag, xdata);
-        return 0;
+        goto out;
+
 err:
         MARKER_STACK_UNWIND (unlink, frame, -1, ENOMEM, NULL, NULL, NULL);
+
+out:
+        if (dict_free)
+                dict_unref (xdata);
         return 0;
 }
 
@@ -986,7 +1134,7 @@ marker_link_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 
         if (priv->feature_enabled & GF_QUOTA) {
                 if (!local->skip_txn)
-                        mq_create_xattrs_txn (this, &local->loc);
+                        mq_create_xattrs_txn (this, &local->loc, buf);
         }
 
 
@@ -1060,13 +1208,15 @@ marker_rename_done (call_frame_t *frame, void *cookie, xlator_t *this,
         if (local->err != 0)
                 goto err;
 
-        mq_reduce_parent_size_txn (this, &oplocal->loc, &oplocal->contribution);
+        mq_reduce_parent_size_txn (this, &oplocal->loc, &oplocal->contribution,
+                                   -1);
 
         if (local->loc.inode != NULL) {
                 /* If destination file exits before rename, it would have
                  * been unlinked while renaming a file
                  */
-                mq_reduce_parent_size_txn (this, &local->loc, NULL);
+                mq_reduce_parent_size_txn (this, &local->loc, NULL,
+                                           local->ia_nlink);
         }
 
         newloc.inode = inode_ref (oplocal->loc.inode);
@@ -1076,7 +1226,7 @@ marker_rename_done (call_frame_t *frame, void *cookie, xlator_t *this,
                 newloc.name++;
         newloc.parent = inode_ref (local->loc.parent);
 
-        mq_create_xattrs_txn (this, &newloc);
+        mq_create_xattrs_txn (this, &newloc, &local->buf);
 
         loc_wipe (&newloc);
 
@@ -1199,7 +1349,7 @@ marker_rename_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         marker_local_t *oplocal                         = NULL;
         call_stub_t    *stub                            = NULL;
         int32_t         ret                             = 0;
-        char            contri_key[CONTRI_KEY_MAX]      = {0, };
+        char            contri_key[QUOTA_KEY_MAX]       = {0, };
         loc_t           newloc                          = {0, };
 
         local = (marker_local_t *) frame->local;
@@ -1224,6 +1374,13 @@ marker_rename_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                         goto quota_err;
                 }
 
+                local->ia_nlink = 0;
+                if (xdata)
+                        ret = dict_get_uint32 (xdata,
+                                               GF_RESPONSE_LINK_COUNT_XDATA,
+                                               &local->ia_nlink);
+
+                local->buf = *buf;
                 stub = fop_rename_cbk_stub (frame, default_rename_cbk, op_ret,
                                             op_errno, buf, preoldparent,
                                             postoldparent, prenewparent,
@@ -1235,7 +1392,8 @@ marker_rename_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 
                 local->stub = stub;
 
-                GET_CONTRI_KEY (contri_key, oplocal->loc.parent->gfid, ret);
+                GET_CONTRI_KEY (this, contri_key, oplocal->loc.parent->gfid,
+                                ret);
                 if (ret < 0) {
                         local->err = ENOMEM;
                         goto quota_err;
@@ -1299,7 +1457,7 @@ marker_do_rename (call_frame_t *frame, void *cookie, xlator_t *this,
 {
         marker_local_t       *local                      = NULL;
         marker_local_t       *oplocal                    = NULL;
-        char                  contri_key[CONTRI_KEY_MAX] = {0, };
+        char                  contri_key[QUOTA_KEY_MAX]  = {0, };
         int32_t               ret                        = 0;
         quota_meta_t          contribution               = {0, };
 
@@ -1320,7 +1478,7 @@ marker_do_rename (call_frame_t *frame, void *cookie, xlator_t *this,
                 goto err;
         }
 
-        GET_CONTRI_KEY (contri_key, oplocal->loc.parent->gfid, ret);
+        GET_CONTRI_KEY (this, contri_key, oplocal->loc.parent->gfid, ret);
         if (ret < 0) {
                 local->err = errno ? errno : ENOMEM;
                 goto err;
@@ -1347,7 +1505,7 @@ marker_get_oldpath_contribution (call_frame_t *lk_frame, void *cookie,
         call_frame_t    *frame                      = NULL;
         marker_local_t  *local                      = NULL;
         marker_local_t  *oplocal                    = NULL;
-        char             contri_key[CONTRI_KEY_MAX] = {0, };
+        char             contri_key[QUOTA_KEY_MAX]  = {0, };
         int32_t          ret                        = 0;
 
         local = lk_frame->local;
@@ -1366,7 +1524,7 @@ marker_get_oldpath_contribution (call_frame_t *lk_frame, void *cookie,
                 local->lk_frame = NULL;
         }
 
-        GET_CONTRI_KEY (contri_key, oplocal->loc.parent->gfid, ret);
+        GET_CONTRI_KEY (this, contri_key, oplocal->loc.parent->gfid, ret);
         if (ret < 0) {
                 local->err = errno ? errno : ENOMEM;
                 goto err;
@@ -1531,7 +1689,10 @@ marker_rename (call_frame_t *frame, xlator_t *this, loc_t *oldloc,
         lock.l_type   = F_WRLCK;
         lock.l_whence = SEEK_SET;
 
-        local->xdata = dict_ref (xdata);
+        local->xdata = xdata ? dict_ref (xdata) : dict_new ();
+        ret = dict_set_int32 (local->xdata, GF_REQUEST_LINK_COUNT_XDATA, 1);
+        if (ret < 0)
+                goto err;
 
         local->frame = frame;
         local->lk_frame = create_frame (this, this->ctx->pool);
@@ -1592,8 +1753,23 @@ marker_truncate_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 
         priv = this->private;
 
-        if (priv->feature_enabled & GF_QUOTA)
-                mq_initiate_quota_txn (this, &local->loc);
+        if (priv->feature_enabled & GF_QUOTA) {
+                /* DHT Rebalance process, at the end of migration will
+                 * first make the src file as a linkto file and then
+                 * truncate the file. By doing a truncate after making the
+                 * src file as linkto file, the contri which is already
+                 * accounted is left over.
+                 * So, we need to account for the linkto file when a truncate
+                 * happens, thereby updating the contri properly.
+                 * By passing NULL for postbuf, mq_prevalidate does not check
+                 * for linkto file.
+                 * Same happens with ftruncate as well.
+                 */
+                if (postbuf && IS_DHT_LINKFILE_MODE (postbuf))
+                        mq_initiate_quota_txn (this, &local->loc, NULL);
+                else
+                        mq_initiate_quota_txn (this, &local->loc, postbuf);
+        }
 
         if (priv->feature_enabled & GF_XTIME)
                 marker_xtime_update_marks (this, local);
@@ -1661,8 +1837,12 @@ marker_ftruncate_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 
         priv = this->private;
 
-        if (priv->feature_enabled & GF_QUOTA)
-                mq_initiate_quota_txn (this, &local->loc);
+        if (priv->feature_enabled & GF_QUOTA) {
+                if (postbuf && IS_DHT_LINKFILE_MODE (postbuf))
+                        mq_initiate_quota_txn (this, &local->loc, NULL);
+                else
+                        mq_initiate_quota_txn (this, &local->loc, postbuf);
+        }
 
         if (priv->feature_enabled & GF_XTIME)
                 marker_xtime_update_marks (this, local);
@@ -1734,7 +1914,7 @@ marker_symlink_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         priv = this->private;
 
         if (priv->feature_enabled & GF_QUOTA) {
-                mq_create_xattrs_txn (this, &local->loc);
+                mq_create_xattrs_txn (this, &local->loc, buf);
         }
 
         if (priv->feature_enabled & GF_XTIME)
@@ -1809,7 +1989,7 @@ marker_mknod_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         priv = this->private;
 
         if ((priv->feature_enabled & GF_QUOTA) && (S_ISREG (local->mode))) {
-                mq_create_xattrs_txn (this, &local->loc);
+                mq_create_xattrs_txn (this, &local->loc, buf);
         }
 
         if (priv->feature_enabled & GF_XTIME)
@@ -1882,7 +2062,7 @@ marker_fallocate_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         priv = this->private;
 
         if (priv->feature_enabled & GF_QUOTA)
-                mq_initiate_quota_txn (this, &local->loc);
+                mq_initiate_quota_txn (this, &local->loc, postbuf);
 
         if (priv->feature_enabled & GF_XTIME)
                 marker_xtime_update_marks (this, local);
@@ -1951,7 +2131,7 @@ marker_discard_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
         priv = this->private;
 
         if (priv->feature_enabled & GF_QUOTA)
-                mq_initiate_quota_txn (this, &local->loc);
+                mq_initiate_quota_txn (this, &local->loc, postbuf);
 
         if (priv->feature_enabled & GF_XTIME)
                 marker_xtime_update_marks (this, local);
@@ -2018,7 +2198,7 @@ marker_zerofill_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
         priv = this->private;
 
         if (priv->feature_enabled & GF_QUOTA)
-                mq_initiate_quota_txn (this, &local->loc);
+                mq_initiate_quota_txn (this, &local->loc, postbuf);
 
         if (priv->feature_enabled & GF_XTIME)
                 marker_xtime_update_marks (this, local);
@@ -2100,7 +2280,7 @@ call_from_sp_client_to_reset_tmfile (call_frame_t *frame,
                         /* TODO check  whether the O_TRUNC would update the
                          * timestamps on a zero length file on all machies.
                          */
-                        close (fd);
+                        sys_close (fd);
                 }
 
                 if (fd != -1 || errno == ENOENT) {
@@ -2155,10 +2335,29 @@ out:
 int
 remove_quota_keys (dict_t *dict, char *k, data_t *v, void *data)
 {
-	call_frame_t 	*frame = data;
-	marker_local_t 	*local = frame->local;
-	xlator_t 	*this = frame->this;
-	int 		ret = -1;
+        call_frame_t    *frame              = data;
+        marker_local_t  *local              = frame->local;
+        xlator_t        *this               = frame->this;
+        marker_conf_t   *priv               = NULL;
+        char             ver_str[NAME_MAX]  = {0,};
+        char            *dot                = NULL;
+        int              ret                = -1;
+
+        priv = this->private;
+
+        /* If quota is enabled immediately after disable.
+         * quota healing starts creating new xattrs
+         * before completing the cleanup operation.
+         * So we should check if the xattr is the new.
+         * Do not remove xattr if its xattr
+         * version is same as current version
+         */
+        if ((priv->feature_enabled & GF_QUOTA) && priv->version > 0) {
+                snprintf (ver_str, sizeof (ver_str), ".%d", priv->version);
+                dot = strrchr (k, '.');
+                if (dot && !strcmp(dot, ver_str))
+                        return 0;
+        }
 
 	ret = syncop_removexattr (FIRST_CHILD (this), &local->loc, k, 0, NULL);
 	if (ret) {
@@ -2289,6 +2488,10 @@ marker_setxattr (call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
                 marker_do_xattr_cleanup (frame, this, xdata, loc);
                 return 0;
         }
+
+        ret = marker_key_replace_with_ver (this, dict);
+        if (ret < 0)
+                goto err;
 
         if (priv->feature_enabled == 0)
                 goto wind;
@@ -2553,11 +2756,26 @@ int32_t
 marker_removexattr (call_frame_t *frame, xlator_t *this, loc_t *loc,
                     const char *name, dict_t *xdata)
 {
-        int32_t          ret   = 0;
-        marker_local_t  *local = NULL;
-        marker_conf_t   *priv  = NULL;
+        int32_t          ret                  = -1;
+        int32_t          i                    = 0;
+        marker_local_t  *local                = NULL;
+        marker_conf_t   *priv                 = NULL;
+        char             key[QUOTA_KEY_MAX]   = {0, };
 
         priv = this->private;
+
+        if (name) {
+                for (i = 0; mq_ext_xattrs[i]; i++) {
+                        if (strcmp (name, mq_ext_xattrs[i]))
+                                continue;
+
+                        GET_QUOTA_KEY (this, key, mq_ext_xattrs[i], ret);
+                        if (ret < 0)
+                                goto err;
+                        name = key;
+                        break;
+                }
+        }
 
         if (priv->feature_enabled == 0)
                 goto wind;
@@ -2595,14 +2813,26 @@ marker_lookup_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                    int32_t op_ret, int32_t op_errno, inode_t *inode,
                    struct iatt *buf, dict_t *dict, struct iatt *postparent)
 {
-        marker_conf_t  *priv    = NULL;
-        marker_local_t *local   = NULL;
-        dict_t         *xattrs  = NULL;
+        marker_conf_t  *priv                       = NULL;
+        marker_local_t *local                      = NULL;
+        dict_t         *xattrs                     = NULL;
+        int32_t         ret                        = -1;
+
         priv = this->private;
+        local = (marker_local_t *) frame->local;
+        frame->local = NULL;
 
         if (op_ret == -1) {
                 gf_log (this->name, GF_LOG_TRACE, "lookup failed with %s",
                         strerror (op_errno));
+                goto unwind;
+        }
+
+        ret = marker_key_set_ver (this, dict);
+        if (ret < 0) {
+                op_ret = -1;
+                op_errno = ENOMEM;
+                goto unwind;
         }
 
         if (dict && __has_quota_xattrs (dict)) {
@@ -2617,10 +2847,7 @@ marker_lookup_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                 xattrs = dict_ref (dict);
         }
 
-        local = (marker_local_t *) frame->local;
-
-        frame->local = NULL;
-
+unwind:
         STACK_UNWIND_STRICT (lookup, frame, op_ret, op_errno, inode, buf,
                              xattrs, postparent);
 
@@ -2652,14 +2879,18 @@ int32_t
 marker_lookup (call_frame_t *frame, xlator_t *this,
                loc_t *loc, dict_t *xattr_req)
 {
-        int32_t         ret     = 0;
-        marker_local_t *local   = NULL;
-        marker_conf_t  *priv    = NULL;
+        int32_t         ret                     = 0;
+        marker_local_t *local                   = NULL;
+        marker_conf_t  *priv                    = NULL;
 
         priv = this->private;
 
         xattr_req = xattr_req ? dict_ref (xattr_req) : dict_new ();
         if (!xattr_req)
+                goto err;
+
+        ret = marker_key_replace_with_ver (this, xattr_req);
+        if (ret < 0)
                 goto err;
 
         if (priv->feature_enabled == 0)
@@ -2676,7 +2907,8 @@ marker_lookup (call_frame_t *frame, xlator_t *this,
                 goto err;
 
         if ((priv->feature_enabled & GF_QUOTA))
-                mq_req_xattr (this, loc, xattr_req, NULL);
+                mq_req_xattr (this, loc, xattr_req, NULL, NULL);
+
 wind:
         STACK_WIND (frame, marker_lookup_cbk, FIRST_CHILD(this),
                     FIRST_CHILD(this)->fops->lookup, loc, xattr_req);
@@ -2708,7 +2940,6 @@ marker_build_ancestry_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                 goto out;
         }
 
-
         list_for_each_entry (entry, &entries->list, list) {
                 if (entry->inode == entry->inode->table->root) {
                         inode_unref (parent);
@@ -2732,6 +2963,13 @@ marker_build_ancestry_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                 inode_unref (parent);
                 parent = inode_ref (entry->inode);
                 loc_wipe (&loc);
+
+                ret = marker_key_set_ver (this, entry->dict);
+                if (ret < 0) {
+                        op_ret = -1;
+                        op_errno = ENOMEM;
+                        break;
+                }
         }
 
         if (parent)
@@ -2780,20 +3018,18 @@ marker_readdirp_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                         continue;
                 }
 
-                loc.path = gf_strdup (resolvedpath);
-                if (!loc.path) {
-                        gf_log (this->name, GF_LOG_ERROR, "strdup of path "
-                                "failed for the entry %s (path: %s)",
-                                entry->d_name, resolvedpath);
-                        loc_wipe (&loc);
-                        continue;
-                }
+                loc.path = resolvedpath;
+                resolvedpath = NULL;
 
                 mq_xattr_state (this, &loc, entry->dict, entry->d_stat);
-
                 loc_wipe (&loc);
-                GF_FREE (resolvedpath);
-                resolvedpath = NULL;
+
+                ret = marker_key_set_ver (this, entry->dict);
+                if (ret < 0) {
+                        op_ret = -1;
+                        op_errno = ENOMEM;
+                        goto unwind;
+                }
         }
 
 unwind:
@@ -2809,11 +3045,16 @@ marker_readdirp (call_frame_t *frame, xlator_t *this, fd_t *fd, size_t size,
         marker_conf_t  *priv  = NULL;
         loc_t           loc   = {0, };
         marker_local_t *local = NULL;
+        int             ret   = -1;
 
         priv = this->private;
 
         dict = dict ? dict_ref(dict) : dict_new();
         if (!dict)
+                goto unwind;
+
+        ret = marker_key_replace_with_ver (this, dict);
+        if (ret < 0)
                 goto unwind;
 
         if (dict_get (dict, GET_ANCESTRY_DENTRY_KEY)) {
@@ -2829,7 +3070,7 @@ marker_readdirp (call_frame_t *frame, xlator_t *this, fd_t *fd, size_t size,
 
                         loc.parent = local->loc.inode = inode_ref (fd->inode);
 
-                        mq_req_xattr (this, &loc, dict, NULL);
+                        mq_req_xattr (this, &loc, dict, NULL, NULL);
                 }
 
                 STACK_WIND (frame, marker_readdirp_cbk,
@@ -2978,6 +3219,7 @@ reconfigure (xlator_t *this, dict_t *options)
         data_t         *data    = NULL;
         gf_boolean_t    flag    = _gf_false;
         marker_conf_t  *priv    = NULL;
+        int32_t         version = 0;
 
         GF_ASSERT (this);
         GF_ASSERT (this->private);
@@ -2991,15 +3233,8 @@ reconfigure (xlator_t *this, dict_t *options)
         data = dict_get (options, "quota");
         if (data) {
                 ret = gf_string2boolean (data->data, &flag);
-                if (ret == 0 && flag == _gf_true) {
-                        ret = init_quota_priv (this);
-                        if (ret < 0) {
-                                gf_log (this->name, GF_LOG_WARNING,
-                                        "failed to initialize quota private");
-                        } else {
-                                priv->feature_enabled |= GF_QUOTA;
-                        }
-                }
+                if (ret == 0 && flag == _gf_true)
+                        priv->feature_enabled |= GF_QUOTA;
         }
 
         data = dict_get (options, "inode-quota");
@@ -3007,6 +3242,18 @@ reconfigure (xlator_t *this, dict_t *options)
                 ret = gf_string2boolean (data->data, &flag);
                 if (ret == 0 && flag == _gf_true)
                         priv->feature_enabled |= GF_INODE_QUOTA;
+        }
+
+        data = dict_get (options, "quota-version");
+        if (data)
+                ret = gf_string2int32 (data->data, &version);
+
+        if (priv->feature_enabled) {
+                if (version >= 0)
+                        priv->version = version;
+                else
+                        gf_log (this->name, GF_LOG_ERROR, "Invalid quota "
+                                "version %d", priv->version);
         }
 
         data = dict_get (options, "xtime");
@@ -3064,19 +3311,15 @@ init (xlator_t *this)
         priv = this->private;
 
         priv->feature_enabled = 0;
+        priv->version = 0;
 
         LOCK_INIT (&priv->lock);
 
         data = dict_get (options, "quota");
         if (data) {
                 ret = gf_string2boolean (data->data, &flag);
-                if (ret == 0 && flag == _gf_true) {
-                        ret = init_quota_priv (this);
-                        if (ret < 0)
-                                goto err;
-
+                if (ret == 0 && flag == _gf_true)
                         priv->feature_enabled |= GF_QUOTA;
-                }
         }
 
         data = dict_get (options, "inode-quota");
@@ -3084,6 +3327,16 @@ init (xlator_t *this)
                 ret = gf_string2boolean (data->data, &flag);
                 if (ret == 0 && flag == _gf_true)
                         priv->feature_enabled |= GF_INODE_QUOTA;
+        }
+
+        data = dict_get (options, "quota-version");
+        if (data)
+                ret = gf_string2int32 (data->data, &priv->version);
+
+        if (priv->feature_enabled && priv->version < 0) {
+                gf_log (this->name, GF_LOG_ERROR, "Invalid quota version %d",
+                        priv->version);
+                goto err;
         }
 
         data = dict_get (options, "xtime");
@@ -3182,5 +3435,6 @@ struct volume_options options[] = {
         {.key = {"inode-quota"} },
         {.key = {"xtime"}},
         {.key = {"gsync-force-xtime"}},
+        {.key = {"quota-version"} },
         {.key = {NULL}}
 };

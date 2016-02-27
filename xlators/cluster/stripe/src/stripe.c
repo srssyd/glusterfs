@@ -4276,6 +4276,17 @@ err:
 }
 
 int32_t
+stripe_seek (call_frame_t *frame, xlator_t *this, fd_t *fd, off_t offset,
+             gf_seek_what_t what, dict_t *xdata)
+{
+        /* TBD */
+        gf_log (this->name, GF_LOG_INFO, "seek called on %s.",
+                uuid_utoa (fd->inode->gfid));
+        STRIPE_STACK_UNWIND (seek, frame, -1, ENOTSUP, 0, NULL);
+        return 0;
+}
+
+int32_t
 stripe_release (xlator_t *this, fd_t *fd)
 {
 	return 0;
@@ -5515,8 +5526,8 @@ stripe_getxattr (call_frame_t *frame, xlator_t *this,
         loc_copy (&local->loc, loc);
 
 
-        if (name && strncmp (name, GF_XATTR_QUOTA_SIZE_KEY,
-                             strlen (GF_XATTR_QUOTA_SIZE_KEY)) == 0) {
+        if (name && strncmp (name, QUOTA_SIZE_KEY,
+                             strlen (QUOTA_SIZE_KEY)) == 0) {
                 local->wind_count = priv->child_count;
 
                 for (i = 0, trav=this->children; i < priv->child_count; i++,
@@ -5729,6 +5740,7 @@ struct xlator_fops fops = {
 	.fallocate	= stripe_fallocate,
 	.discard	= stripe_discard,
         .zerofill       = stripe_zerofill,
+        .seek           = stripe_seek,
 };
 
 struct xlator_cbks cbks = {

@@ -28,6 +28,8 @@
 #include "glusterd-svc-helper.h"
 #include "glusterd-shd-svc.h"
 #include "glusterd-snapd-svc.h"
+#include "glusterd-mgmt.h"
+#include "glusterd-server-quorum.h"
 
 #include <stdint.h>
 #include <sys/socket.h>
@@ -278,6 +280,7 @@ __glusterd_handle_create_volume (rpcsvc_request_t *req)
         xlator_t               *this        = NULL;
         char                   *free_ptr    = NULL;
         char                   *trans_type  = NULL;
+        char                   *address_family_str  = NULL;
         uuid_t                  volume_id   = {0,};
         uuid_t                  tmp_uuid    = {0};
         int32_t                 type        = 0;
@@ -358,6 +361,8 @@ __glusterd_handle_create_volume (rpcsvc_request_t *req)
                 goto out;
         }
 
+
+
         ret = dict_get_str (dict, "transport", &trans_type);
         if (ret) {
                 snprintf (err_str, sizeof (err_str), "Unable to get "
@@ -365,6 +370,30 @@ __glusterd_handle_create_volume (rpcsvc_request_t *req)
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         GD_MSG_DICT_GET_FAILED, "%s", err_str);
                 goto out;
+        }
+
+        ret = dict_get_str (this->options, "transport.address-family",
+                        &address_family_str);
+
+        if (!ret) {
+                ret = dict_set_dynstr_with_alloc (dict,
+                                "transport.address-family",
+                                address_family_str);
+                if (ret) {
+                        gf_log (this->name, GF_LOG_ERROR,
+                                "failed to set transport.address-family");
+                        goto out;
+                }
+        } else if (!strcmp(trans_type, "tcp")) {
+                /* Setting default as inet for trans_type tcp */
+                ret = dict_set_dynstr_with_alloc (dict,
+                                "transport.address-family",
+                                "inet");
+                if (ret) {
+                        gf_log (this->name, GF_LOG_ERROR,
+                                "failed to set transport.address-family");
+                        goto out;
+                }
         }
         ret = dict_get_str (dict, "bricks", &bricks);
         if (ret) {
@@ -453,11 +482,14 @@ __glusterd_handle_cli_start_volume (rpcsvc_request_t *req)
         glusterd_op_t                   cli_op = GD_OP_START_VOLUME;
         char                            errstr[2048] = {0,};
         xlator_t                        *this = NULL;
+        glusterd_conf_t                 *conf = NULL;
 
         this = THIS;
         GF_ASSERT (this);
         GF_ASSERT (req);
 
+        conf = this->private;
+        GF_ASSERT (conf);
         ret = xdr_to_generic (req->msg[0], &cli_req, (xdrproc_t)xdr_gf_cli_req);
         if (ret < 0) {
                 snprintf (errstr, sizeof (errstr), "Failed to decode message "
@@ -497,8 +529,18 @@ __glusterd_handle_cli_start_volume (rpcsvc_request_t *req)
         gf_msg_debug (this->name, 0, "Received start vol req"
                       " for volume %s", volname);
 
-        ret = glusterd_op_begin_synctask (req, GD_OP_START_VOLUME, dict);
-
+        if (conf->op_version <= GD_OP_VERSION_3_7_6) {
+                gf_msg_debug (this->name, 0, "The cluster is operating at "
+                          "version less than or equal to %d. Volume start "
+                          "falling back to syncop framework.",
+                          GD_OP_VERSION_3_7_6);
+                ret = glusterd_op_begin_synctask (req, GD_OP_START_VOLUME,
+                                                  dict);
+        } else {
+                ret = glusterd_mgmt_v3_initiate_all_phases (req,
+                                                            GD_OP_START_VOLUME,
+                                                            dict);
+        }
 out:
         free (cli_req.dict.dict_val); //its malloced by xdr
 
@@ -669,14 +711,54 @@ out:
 
         return ret;
 }
-
 int
 glusterd_handle_cli_delete_volume (rpcsvc_request_t *req)
 {
         return glusterd_big_locked_handler (req,
                                             __glusterd_handle_cli_delete_volume);
 }
+int
+glusterd_handle_shd_option_for_tier (glusterd_volinfo_t *volinfo,
+                                     char *value, dict_t *dict)
+{
+        int             count           = 0;
+        char            dict_key[1024]  = {0, };
+        char           *key             = NULL;
+        int             ret             = 0;
 
+        key = gd_get_shd_key (volinfo->tier_info.cold_type);
+        if (key) {
+                count++;
+                snprintf (dict_key, sizeof (dict_key), "key%d", count);
+                ret = dict_set_str (dict, dict_key, key);
+                if (ret)
+                        goto out;
+                snprintf (dict_key, sizeof (dict_key), "value%d", count);
+                ret = dict_set_str (dict, dict_key, value);
+                if (ret)
+                        goto out;
+        }
+
+        key = gd_get_shd_key (volinfo->tier_info.hot_type);
+        if (key) {
+                count++;
+                snprintf (dict_key, sizeof (dict_key), "key%d", count);
+                ret = dict_set_str (dict, dict_key, key);
+                if (ret)
+                        goto out;
+                snprintf (dict_key, sizeof (dict_key), "value%d", count);
+                ret = dict_set_str (dict, dict_key, value);
+                if (ret)
+                        goto out;
+        }
+
+        ret = dict_set_int32 (dict, "count", count);
+        if (ret)
+                goto out;
+
+out:
+        return ret;
+}
 static int
 glusterd_handle_heal_enable_disable (rpcsvc_request_t *req, dict_t *dict,
                                      glusterd_volinfo_t *volinfo)
@@ -699,22 +781,30 @@ glusterd_handle_heal_enable_disable (rpcsvc_request_t *req, dict_t *dict,
                 goto out;
         }
 
-        key = volgen_get_shd_key (volinfo);
-        if (!key) {
-                ret = -1;
-                goto out;
-        }
-
-        /* Convert this command to volume-set command based on volume type */
-        ret = dict_set_str (dict, "key1", key);
-        if (ret)
-                goto out;
-
         if (heal_op == GF_SHD_OP_HEAL_ENABLE) {
                 value = "enable";
         } else if (heal_op == GF_SHD_OP_HEAL_DISABLE) {
                 value = "disable";
         }
+
+       /* Convert this command to volume-set command based on volume type */
+        if (volinfo->type == GF_CLUSTER_TYPE_TIER) {
+                ret = glusterd_handle_shd_option_for_tier (volinfo, value,
+                                                           dict);
+                if (!ret)
+                        goto set_volume;
+                goto out;
+        }
+
+        key = volgen_get_shd_key (volinfo->type);
+        if (!key) {
+                ret = -1;
+                goto out;
+        }
+
+        ret = dict_set_str (dict, "key1", key);
+        if (ret)
+                goto out;
 
         ret = dict_set_str (dict, "value1", value);
         if (ret)
@@ -724,6 +814,7 @@ glusterd_handle_heal_enable_disable (rpcsvc_request_t *req, dict_t *dict,
         if (ret)
                 goto out;
 
+set_volume:
         ret = glusterd_op_begin_synctask (req, GD_OP_SET_VOLUME, dict);
 
 out:
@@ -1383,6 +1474,26 @@ glusterd_op_stage_start_volume (dict_t *dict, char **op_errstr,
                 goto out;
         }
 
+        if (priv->op_version > GD_OP_VERSION_3_7_5) {
+                ret = glusterd_validate_quorum (this, GD_OP_START_VOLUME, dict,
+                                                op_errstr);
+                if (ret) {
+                        gf_msg (this->name, GF_LOG_CRITICAL, 0,
+                                GD_MSG_SERVER_QUORUM_NOT_MET,
+                                "Server quorum not met. Rejecting operation.");
+                        goto out;
+                }
+        }
+
+        /* This is an incremental approach to have all the volinfo objects ref
+         * count. The first attempt is made in volume start transaction to
+         * ensure it doesn't race with import volume where stale volume is
+         * deleted. There are multiple instances of GlusterD crashing in
+         * bug-948686.t because of this. Once this approach is full proof, all
+         * other volinfo objects will be refcounted.
+         */
+        glusterd_volinfo_ref (volinfo);
+
         ret = glusterd_validate_volume_id (dict, volinfo);
         if (ret)
                 goto out;
@@ -1512,6 +1623,9 @@ glusterd_op_stage_start_volume (dict_t *dict, char **op_errstr,
         volinfo->caps = caps;
         ret = 0;
 out:
+        if (volinfo)
+                glusterd_volinfo_unref (volinfo);
+
         if (ret && (msg[0] != '\0')) {
                 gf_msg (this->name, GF_LOG_ERROR, 0,
                         GD_MSG_OP_STAGE_START_VOL_FAIL, "%s", msg);
@@ -1822,9 +1936,7 @@ glusterd_op_stage_heal_volume (dict_t *dict, char **op_errstr)
                 ret = 0;
                 goto out;
         }
-
-        enabled = dict_get_str_boolean (opt_dict, volgen_get_shd_key (volinfo),
-                                        1);
+        enabled = gd_is_self_heal_enabled (volinfo, opt_dict);
         if (!enabled) {
                 ret = -1;
                 snprintf (msg, sizeof (msg), "Self-heal-daemon is "
@@ -2012,6 +2124,7 @@ glusterd_op_create_volume (dict_t *dict, char **op_errstr)
         char                  msg[1024] __attribute__((unused)) = {0, };
         char                 *brick_mount_dir = NULL;
         char                  key[PATH_MAX]   = "";
+        char                 *address_family_str = NULL;
 
         this = THIS;
         GF_ASSERT (this);
@@ -2284,6 +2397,20 @@ glusterd_op_create_volume (dict_t *dict, char **op_errstr)
                 goto out;
         }
 
+        ret = dict_get_str (dict, "transport.address-family",
+                        &address_family_str);
+
+        if (!ret) {
+                ret = dict_set_dynstr_with_alloc(volinfo->dict,
+                                "transport.address-family", address_family_str);
+                if (ret) {
+                        gf_log (this->name, GF_LOG_ERROR,
+                                        "Failed to set transport.address-family for %s",
+                                        volinfo->volname);
+                        goto out;
+                }
+        }
+
         gd_update_volume_op_versions (volinfo);
 
         volinfo->caps = caps;
@@ -2398,6 +2525,15 @@ glusterd_op_start_volume (dict_t *dict, char **op_errstr)
                 goto out;
         }
 
+        /* This is an incremental approach to have all the volinfo objects ref
+         * count. The first attempt is made in volume start transaction to
+         * ensure it doesn't race with import volume where stale volume is
+         * deleted. There are multiple instances of GlusterD crashing in
+         * bug-948686.t because of this. Once this approach is full proof, all
+         * other volinfo objects will be refcounted.
+         */
+        glusterd_volinfo_ref (volinfo);
+
         /* A bricks mount dir is required only by snapshots which were
          * introduced in gluster-3.6.0
          */
@@ -2459,18 +2595,34 @@ glusterd_op_start_volume (dict_t *dict, char **op_errstr)
                 if (ret)
                         goto out;
         }
-
-        if (volinfo->type == GF_CLUSTER_TYPE_TIER) {
-                glusterd_defrag_info_set (volinfo, dict,
+        if (conf->op_version <= GD_OP_VERSION_3_7_6) {
+                /*
+                 * Starting tier daemon on originator node will fail if
+                 * atleast one of the peer host  brick for the volume.
+                 * Because The bricks in the peer haven't started when you
+                 * commit on originator node.
+                 * Please upgrade to version greater than GD_OP_VERSION_3_7_6
+                 */
+                if (volinfo->type == GF_CLUSTER_TYPE_TIER) {
+                        if (volinfo->rebal.op != GD_OP_REMOVE_BRICK) {
+                                glusterd_defrag_info_set (volinfo, dict,
                                           GF_DEFRAG_CMD_START_TIER,
                                           GF_DEFRAG_CMD_START,
                                           GD_OP_REBALANCE);
-                glusterd_restart_rebalance_for_volume (volinfo);
+                        }
+                        glusterd_restart_rebalance_for_volume (volinfo);
+                }
+        } else {
+                /* Starting tier daemon is moved into post validate phase */
         }
+
 
         ret = glusterd_svcs_manager (volinfo);
 
 out:
+        if (!volinfo)
+                glusterd_volinfo_unref (volinfo);
+
         gf_msg_trace (this->name, 0, "returning %d ", ret);
         return ret;
 }
@@ -2715,7 +2867,7 @@ glusterd_clearlocks_rmdir_mount (glusterd_volinfo_t *volinfo, char *mntpt)
 
         priv = THIS->private;
 
-        ret = rmdir (mntpt);
+        ret = sys_rmdir (mntpt);
         if (ret) {
                 gf_msg_debug (THIS->name, 0, "rmdir failed");
                 goto out;

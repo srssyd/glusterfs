@@ -133,6 +133,7 @@ union _ec_cbk
     fop_xattrop_cbk_t      xattrop;
     fop_fxattrop_cbk_t     fxattrop;
     fop_zerofill_cbk_t     zerofill;
+    fop_seek_cbk_t         seek;
 };
 
 struct _ec_lock
@@ -167,6 +168,7 @@ struct _ec_lock_link
 {
     ec_lock_t        *lock;
     ec_fop_data_t    *fop;
+    struct list_head  owner_list;
     struct list_head  wait_list;
     gf_boolean_t      update[2];
     loc_t            *base;
@@ -187,7 +189,6 @@ struct _ec_fop_data
     xlator_t          *xl;
     call_frame_t      *req_frame;    /* frame of the calling xlator */
     call_frame_t      *frame;        /* frame used by this fop */
-    struct list_head   owner_list;   /* member of lock owner list */
     struct list_head   cbk_list;     /* sorted list of groups of answers */
     struct list_head   answer_list;  /* list of answers */
     struct list_head   pending_list; /* member of ec_t.pending_fops */
@@ -207,6 +208,9 @@ struct _ec_fop_data
     uintptr_t          remaining;
     uintptr_t          received; /* Mask of responses */
     uintptr_t          good;
+
+    uid_t              uid;
+    gid_t              gid;
 
     ec_wind_f          wind;
     ec_handler_f       handler;
@@ -240,6 +244,7 @@ struct _ec_fop_data
     struct gf_flock    flock;
     struct iovec      *vector;
     struct iobref     *buffers;
+    gf_seek_what_t     seek;
 };
 
 struct _ec_cbk_data
@@ -268,8 +273,10 @@ struct _ec_cbk_data
     struct gf_flock  flock;
     struct iovec *   vector;
     struct iobref *  buffers;
-    gf_dirent_t      entries;
     char            *str;
+    gf_dirent_t      entries;
+    off_t            offset;
+    gf_seek_what_t   what;
 };
 
 struct _ec_heal

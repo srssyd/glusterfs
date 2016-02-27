@@ -18,7 +18,7 @@ import xml.etree.ElementTree as XET
 from subprocess import PIPE
 from resource import Popen, FILE, GLUSTER, SSH
 from threading import Lock
-from errno import EEXIST
+from errno import ECHILD
 import re
 import random
 from gconf import gconf
@@ -32,14 +32,26 @@ from gsyncdstatus import GeorepStatus, set_monitor_status
 ParseError = XET.ParseError if hasattr(XET, 'ParseError') else SyntaxError
 
 
-def get_subvol_num(brick_idx, replica_count, disperse_count):
+def get_subvol_num(brick_idx, vol, hot):
+    tier = vol.is_tier()
+    disperse_count = vol.disperse_count(tier, hot)
+    replica_count = vol.replica_count(tier, hot)
+
+    if (tier and not hot):
+        brick_idx = brick_idx - vol.get_hot_bricks_count(tier)
+
     subvol_size = disperse_count if disperse_count > 0 else replica_count
     cnt = int((brick_idx + 1) / subvol_size)
     rem = (brick_idx + 1) % subvol_size
     if rem > 0:
-        return cnt + 1
+        cnt = cnt + 1
+
+    if (tier and hot):
+        return "hot_" + str(cnt)
+    elif (tier and not hot):
+        return "cold_" + str(cnt)
     else:
-        return cnt
+        return str(cnt)
 
 
 def get_slave_bricks_status(host, vol):
@@ -90,7 +102,7 @@ class Volinfo(object):
             else:
                 via = ' '
             raise GsyncdError('getting volume info of %s%s '
-                              'failed with errorcode %s',
+                              'failed with errorcode %s' %
                               (vol, via, vi.find('opErrno').text))
         self.tree = vi
         self.volume = vol
@@ -98,6 +110,13 @@ class Volinfo(object):
 
     def get(self, elem):
         return self.tree.findall('.//' + elem)
+
+    def is_tier(self):
+        return (self.get('typeStr')[0].text == 'Tier')
+
+    def is_hot(self, brickpath):
+        logging.debug('brickpath: ' + repr(brickpath))
+        return brickpath in self.hot_bricks
 
     @property
     @memoize
@@ -113,20 +132,38 @@ class Volinfo(object):
         ids = self.get('id')
         if len(ids) != 1:
             raise GsyncdError("volume info of %s obtained from %s: "
-                              "ambiguous uuid",
-                              self.volume, self.host)
+                              "ambiguous uuid" % (self.volume, self.host))
         return ids[0].text
 
-    @property
-    @memoize
-    def replica_count(self):
-        return int(self.get('replicaCount')[0].text)
+    def replica_count(self, tier, hot):
+        if (tier and hot):
+            return int(self.get('hotBricks/hotreplicaCount')[0].text)
+        elif (tier and not hot):
+            return int(self.get('coldBricks/coldreplicaCount')[0].text)
+        else:
+            return int(self.get('replicaCount')[0].text)
+
+    def disperse_count(self, tier, hot):
+        if (tier and hot):
+            # Tiering doesn't support disperse volume as hot brick,
+            # hence no xml output, so returning 0. In case, if it's
+            # supported later, we should change here.
+            return 0
+        elif (tier and not hot):
+            return int(self.get('coldBricks/colddisperseCount')[0].text)
+        else:
+            return int(self.get('disperseCount')[0].text)
 
     @property
     @memoize
-    def disperse_count(self):
-        return int(self.get('disperseCount')[0].text)
+    def hot_bricks(self):
+        return [b.text for b in self.get('hotBricks/brick')]
 
+    def get_hot_bricks_count(self, tier):
+        if (tier):
+            return int(self.get('hotBricks/hotbrickCount')[0].text)
+        else:
+            return 0
 
 class Monitor(object):
 
@@ -180,10 +217,18 @@ class Monitor(object):
         ret = 0
 
         def nwait(p, o=0):
-            p2, r = waitpid(p, o)
-            if not p2:
-                return
-            return r
+            try:
+                p2, r = waitpid(p, o)
+                if not p2:
+                    return
+                return r
+            except OSError as e:
+                # no child process, this happens if the child process
+                # already died and has been cleaned up
+                if e.errno == ECHILD:
+                    return -1
+                else:
+                    raise
 
         def exit_signalled(s):
             """ child teminated due to receipt of SIGUSR1 """
@@ -232,6 +277,8 @@ class Monitor(object):
             # spawn the agent process
             apid = os.fork()
             if apid == 0:
+                os.close(rw)
+                os.close(ww)
                 os.execv(sys.executable, argv + ['--local-path', w[0],
                                                  '--agent',
                                                  '--rpc-fd',
@@ -241,6 +288,8 @@ class Monitor(object):
             cpid = os.fork()
             if cpid == 0:
                 os.close(pr)
+                os.close(ra)
+                os.close(wa)
                 os.execv(sys.executable, argv + ['--feedback-fd', str(pw),
                                                  '--local-path', w[0],
                                                  '--local-id',
@@ -248,9 +297,9 @@ class Monitor(object):
                                                  '--rpc-fd',
                                                  ','.join([str(rw), str(ww),
                                                            str(ra), str(wa)]),
-                                                 '--subvol-num', str(w[2]),
-                                                 '--resource-remote',
-                                                 remote_host])
+                                                 '--subvol-num', str(w[2])] +
+                         (['--is-hottier'] if w[3] else []) +
+                         ['--resource-remote', remote_host])
 
             cpids.add(cpid)
             agents.add(apid)
@@ -269,30 +318,52 @@ class Monitor(object):
 
             if so:
                 ret = nwait(cpid, os.WNOHANG)
+                ret_agent = nwait(apid, os.WNOHANG)
+
+                if ret_agent is not None:
+                    # Agent is died Kill Worker
+                    logging.info("Changelog Agent died, "
+                                 "Aborting Worker(%s)" % w[0])
+                    os.kill(cpid, signal.SIGKILL)
+                    nwait(cpid)
+                    nwait(apid)
+
                 if ret is not None:
                     logging.info("worker(%s) died before establishing "
                                  "connection" % w[0])
-                    nwait(apid) #wait for agent
+                    nwait(apid)  # wait for agent
                 else:
                     logging.debug("worker(%s) connected" % w[0])
                     while time.time() < t0 + conn_timeout:
                         ret = nwait(cpid, os.WNOHANG)
+                        ret_agent = nwait(apid, os.WNOHANG)
+
                         if ret is not None:
                             logging.info("worker(%s) died in startup "
                                          "phase" % w[0])
-                            nwait(apid) #wait for agent
+                            nwait(apid)  # wait for agent
                             break
+
+                        if ret_agent is not None:
+                            # Agent is died Kill Worker
+                            logging.info("Changelog Agent died, Aborting "
+                                         "Worker(%s)" % w[0])
+                            os.kill(cpid, signal.SIGKILL)
+                            nwait(cpid)
+                            nwait(apid)
+                            break
+
                         time.sleep(1)
             else:
                 logging.info("worker(%s) not confirmed in %d sec, "
                              "aborting it" % (w[0], conn_timeout))
                 os.kill(cpid, signal.SIGKILL)
-                nwait(apid) #wait for agent
+                nwait(apid)  # wait for agent
                 ret = nwait(cpid)
             if ret is None:
                 self.status[w[0]].set_worker_status(self.ST_STABLE)
-                #If worker dies, agent terminates on EOF.
-                #So lets wait for agent first.
+                # If worker dies, agent terminates on EOF.
+                # So lets wait for agent first.
                 nwait(apid)
                 ret = nwait(cpid)
             if exit_signalled(ret):
@@ -376,10 +447,14 @@ def distribute(*resources):
             else:
                 slaves = slavevols
 
-    workerspex = [(brick['dir'], slaves[idx % len(slaves)],
-                  get_subvol_num(idx, mvol.replica_count, mvol.disperse_count))
-                  for idx, brick in enumerate(mvol.bricks)
-                  if is_host_local(brick['host'])]
+    workerspex = []
+    for idx, brick in enumerate(mvol.bricks):
+        if is_host_local(brick['host']):
+            is_hot = mvol.is_hot(":".join([brick['host'], brick['dir']]))
+            workerspex.append((brick['dir'],
+                               slaves[idx % len(slaves)],
+                               get_subvol_num(idx, mvol, is_hot),
+                               is_hot))
     logging.info('worker specs: ' + repr(workerspex))
     return workerspex, suuid, slave_vol, slave_host, master
 

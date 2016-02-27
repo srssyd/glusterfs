@@ -117,6 +117,8 @@ AC_CONFIG_FILES([Makefile
                 xlators/features/Makefile
                 xlators/features/arbiter/Makefile
                 xlators/features/arbiter/src/Makefile
+                xlators/experimental/fdl/Makefile
+                xlators/experimental/fdl/src/Makefile
                 xlators/features/changelog/Makefile
                 xlators/features/changelog/src/Makefile
                 xlators/features/changelog/lib/Makefile
@@ -186,6 +188,11 @@ AC_CONFIG_FILES([Makefile
                 xlators/mgmt/Makefile
                 xlators/mgmt/glusterd/Makefile
                 xlators/mgmt/glusterd/src/Makefile
+                xlators/experimental/Makefile
+                xlators/experimental/nsr-client/Makefile
+                xlators/experimental/nsr-client/src/Makefile
+                xlators/experimental/nsr-server/Makefile
+                xlators/experimental/nsr-server/src/Makefile
                 cli/Makefile
                 cli/src/Makefile
                 doc/Makefile
@@ -245,7 +252,9 @@ AC_CONFIG_FILES([Makefile
 		tools/glusterfind/src/tool.conf
 	        tools/glusterfind/glusterfind
 	        tools/glusterfind/Makefile
-                tools/glusterfind/src/Makefile])
+                tools/glusterfind/src/Makefile
+                tests/basic/fuse/Makefile
+                tests/basic/gfapi/Makefile])
 
 AC_CANONICAL_HOST
 
@@ -387,6 +396,10 @@ AC_CHECK_HEADERS([sys/xattr.h])
 AC_CHECK_HEADERS([sys/ioctl.h], AC_DEFINE(HAVE_IOCTL_IN_SYS_IOCTL_H, 1, [have sys/ioctl.h]))
 
 AC_CHECK_HEADERS([sys/extattr.h])
+
+AC_CHECK_HEADERS([openssl/dh.h])
+
+AC_CHECK_HEADERS([openssl/ecdh.h])
 
 dnl Math library
 AC_CHECK_LIB([m], [pow], [MATH_LIB='-lm'], [MATH_LIB=''])
@@ -775,38 +788,6 @@ AC_SUBST(SQLITE_LIBS)
 AM_CONDITIONAL(BUILD_GFDB, test "x${BUILD_GFDB}" = "xyes")
 AM_CONDITIONAL(USE_GFDB, test "x${BUILD_GFDB}" = "xyes")
 
-# check for systemtap/dtrace
-BUILD_SYSTEMTAP=no
-AC_MSG_CHECKING([whether to include systemtap tracing support])
-AC_ARG_ENABLE([systemtap],
-              [AS_HELP_STRING([--enable-systemtap],
-              [Enable inclusion of systemtap trace support])],
-              [ENABLE_SYSTEMTAP="${enableval}"], [ENABLE_SYSTEMTAP="def"])
-
-AM_CONDITIONAL([ENABLE_SYSTEMTAP], [test "x${ENABLE_SYSTEMTAP}" = "xyes"])
-AC_MSG_RESULT(${ENABLE_SYSTEMTAP})
-
-if test "x${ENABLE_SYSTEMTAP}" != "xno"; then
-    AC_CHECK_PROG(DTRACE, dtrace, "yes", "no")
-    AC_CHECK_HEADER([sys/sdt.h], [SDT_H_FOUND="yes"],
-                    [SDT_H_FOUND="no"])
-fi
-
-if test "x${ENABLE_SYSTEMTAP}" = "xyes"; then
-    if test "x${DTRACE}" = "xno"; then
-        AC_MSG_ERROR([dtrace not found])
-    elif test "$x{SDT_H_FOUND}" = "xno"; then
-        AC_MSG_ERROR([systemtap support needs sys/sdt.h header])
-    fi
-fi
-
-if test "x${DTRACE}" = "xyes" -a "x${SDT_H_FOUND}" = "xyes"; then
-    AC_MSG_CHECKING([x"${DTRACE}"xy"${SDT_H_FOUND}"y])
-    AC_DEFINE([HAVE_SYSTEMTAP], [1], [Define to 1 if using  probes.])
-    BUILD_SYSTEMTAP=yes
-fi
-# end of systemtap/dtrace
-
 # xml-output
 AC_ARG_ENABLE([xml-output],
               AC_HELP_STRING([--disable-xml-output],
@@ -891,6 +872,17 @@ AC_SUBST(ARGP_STANDALONE_CPPFLAGS)
 AC_SUBST(ARGP_STANDALONE_LDADD)
 AC_SUBST(ARGP_STANDALONE_DIR)
 
+# Check for atomic operation support
+echo -n "checking for atomic operation support... "
+AC_LINK_IFELSE([AC_LANG_SOURCE([[int main() { long int a = 4; __sync_fetch_and_add_8 (&a, 1); }]])],
+                   [have_sync_fetch_and_add_8=yes], [have_sync_fetch_and_add_8=no])
+if test "x${have_sync_fetch_and_add_8}" = "xyes"; then
+  echo "yes"
+  AC_DEFINE(HAVE_ATOMIC_BUILTINS, 1, [have atomic builtins])
+else
+  echo "no"
+fi
+
 AC_CHECK_HEADER([malloc.h], AC_DEFINE(HAVE_MALLOC_H, 1, [have malloc.h]))
 
 AC_CHECK_FUNC([llistxattr], [have_llistxattr=yes])
@@ -912,6 +904,14 @@ AC_CHECK_FUNC([posix_fallocate], [have_posix_fallocate=yes])
 if test "x${have_posix_fallocate}" = "xyes"; then
    AC_DEFINE(HAVE_POSIX_FALLOCATE, 1, [define if posix_fallocate exists])
 fi
+
+OLD_CFLAGS=${CFLAGS}
+CFLAGS="-D_GNU_SOURCE"
+AC_CHECK_DECL([SEEK_HOLE], , , [#include <unistd.h>])
+if test "x${ac_cv_have_decl_SEEK_HOLE}" = "xyes"; then
+   AC_DEFINE(HAVE_SEEK_HOLE, 1, [define if SEEK_HOLE is available])
+fi
+CFLAGS=${OLD_CFLAGS}
 
 # Check the distribution where you are compiling glusterfs on
 
@@ -950,15 +950,18 @@ fi
 
 dnl check for gcc -Werror=implicit-function-declaration
 saved_CFLAGS=$CFLAGS
+saved_GF_CFLAGS=$GF_CFLAGS
 CFLAGS="-Werror=implicit-function-declaration"
+GF_CFLAGS="-Werror=implicit-function-declaration"
 AC_MSG_CHECKING([whether $CC accepts -Werror=implicit-function-declaration])
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM()], [cc_werror_implicit=yes], [cc_werror_implicit=no])
 echo $cc_werror_implicit
 if test "x$cc_werror_implicit" = "xno"; then
     CFLAGS="$saved_CFLAGS"
+    GF_CFLAGS="$saved_GF_CFLAGS"
 else
     CFLAGS="$saved_CFLAGS $CFLAGS"
-    GF_CFLAGS="$GF_CFLAGS $CFLAGS"
+    GF_CFLAGS="$saved_GF_CFLAGS $GF_CFLAGS"
 fi
 
 dnl clang is mostly GCC-compatible, but its version is much lower,
@@ -1148,99 +1151,88 @@ if test "x$LIBAIO" != "x"; then
    BUILD_LIBAIO=yes
 fi
 
-# glupy section
+dnl glupy section
 BUILD_GLUPY=no
 have_python2=no
 have_Python_h=no
 
-AM_PATH_PYTHON()
-if echo $PYTHON_VERSION | grep ^2; then
-  have_python2=yes
-fi
+AC_ARG_ENABLE([glupy], AS_HELP_STRING([--enable-glupy], [build glupy]))
+if test "x$enable_glupy" != "xno"; then enable_glupy=yes; fi
 
-# Save flags before testing python
-saved_CFLAGS=$CFLAGS
-saved_CPPFLAGS=$CPPFLAGS
-saved_LDFLAGS=$LDFLAGS
+if test "x$enable_glupy" = "xyes"; then
+    dnl Check if python exists
+    AM_PATH_PYTHON()
+    dnl Check if version matches that we require
+    if echo $PYTHON_VERSION | grep ^2; then
+        have_python2=yes
+    fi
 
-# Use pkg-config to get runtime search patch missing from ${PYTHON}-config
-# Just do "true" on failure so that configure does not bail out
-PKG_CHECK_MODULES([PYTHON], "python-$PYTHON_VERSION",,true)
-CFLAGS="`${PYTHON}-config --cflags`"
-CPPFLAGS=$CFLAGS
-LDFLAGS="${PYTHON_LIBS} -L`${PYTHON}-config --prefix`/lib -L`${PYTHON}-config --prefix`/$libdir `${PYTHON}-config --ldflags`"
+    dnl Use pkg-config to get runtime search patch missing from ${PYTHON}-config
+    dnl Just do "true" on failure so that configure does not bail out
+    PKG_CHECK_MODULES([PYTHON], "python-$PYTHON_VERSION",,true)
 
-AC_CHECK_HEADERS([python$PYTHON_VERSION/Python.h],[have_Python_h=yes],[])
-AC_ARG_ENABLE([glupy],
-              AS_HELP_STRING([--enable-glupy],
-                             [build glupy]))
-case x$enable_glupy in
-   xyes)
-      if test "x$have_python2" = "xyes" -a "x$have_Python_h" = "xyes"; then
-        BUILD_GLUPY=yes
-        PYTHONDEV_CFLAGS="$CFLAGS"
-        PYTHONDEV_CPPFLAGS="$CPPFLAGS"
-        PYTHONDEV_LDFLAGS="$LDFLAGS"
-        AC_SUBST(PYTHONDEV_CFLAGS)
-        AC_SUBST(PYTHONDEV_CPPFLAGS)
-        AC_SUBST(PYTHONDEV_LDFLAGS)
-      else
-        AC_MSG_ERROR([glupy requires python-devel/python-dev package and python2.x])
-      fi
-      ;;
-   xno)
-      ;;
-   *)
-      if test "x$have_python2" = "xyes" -a "x$have_Python_h" = "xyes"; then
-        BUILD_GLUPY=yes
-        PYTHONDEV_CFLAGS="$CFLAGS"
-        PYTHONDEV_CPPFLAGS="$CPPFLAGS"
-        PYTHONDEV_LDFLAGS="$LDFLAGS"
-        AC_SUBST(PYTHONDEV_CFLAGS)
-        AC_SUBST(PYTHONDEV_CPPFLAGS)
-        AC_SUBST(PYTHONDEV_LDFLAGS)
-      else
+    PYTHONDEV_CPPFLAGS="`${PYTHON}-config --cflags`"
+    dnl Edit out the flags that are not required or are conflicting
+    PYTHONDEV_CPPFLAGS=`echo ${PYTHONDEV_CPPFLAGS} | sed -e 's/-Wp,-D_FORTIFY_SOURCE=[[0-9]]//g'`
+
+    dnl Find python libs at user configured libdir and also "lib" under prefix
+    PYTHONDEV_LDFLAGS="${PYTHON_LIBS} -L`${PYTHON}-config --prefix`/lib -L`${PYTHON}-config --prefix`/$libdir `${PYTHON}-config --ldflags`"
+
+    BUILD_PYTHON_SITE_PACKAGES=`$PYTHON -c 'from distutils.sysconfig import get_python_lib; print(get_python_lib())'`
+    BUILD_PYTHON_INC=`$PYTHON -c "from distutils import sysconfig; print sysconfig.get_python_inc()"`
+    BUILD_PYTHON_LIB=python$PYTHON_VERSION
+
+    GLUPY_SUBDIR=glupy
+    GLUPY_SUBDIR_MAKEFILE=xlators/features/glupy/Makefile
+    GLUPY_SUBDIR_SRC_MAKEFILE=xlators/features/glupy/src/Makefile
+
+    dnl Now check for python header using the include path obtained above
+    AC_CHECK_HEADERS([${BUILD_PYTHON_INC}/Python.h],[have_Python_h=yes],[])
+
+    if test "x$have_python2" = "xyes" -a "x$have_Python_h" = "xyes"; then
+        case $host_os in
+            darwin*)
+                BUILD_GLUPY=no
+                ;;
+            *)
+                BUILD_GLUPY=yes
+                ;;
+        esac
+    else
         AC_MSG_WARN([
         ---------------------------------------------------------------------------------
-         cannot build glupy. python 2.x and python-devel/python-dev package are required.
+        cannot build glupy. python 2.x and python-devel/python-dev package are required.
         ---------------------------------------------------------------------------------])
-      fi
-      ;;
-esac
-# Restore flags
-CFLAGS=$saved_CFLAGS
-CPPFLAGS=$saved_CPPFLAGS
-LDFLAGS=$saved_LDFLAGS
+    fi
 
-case $host_os in
-     darwin*)
-        BUILD_GLUPY=no
-        ;;
-esac
+    if test "x$BUILD_GLUPY" = "xyes"; then
 
-if test "x$BUILD_GLUPY" = "xyes"; then
-   BUILD_PYTHON_SITE_PACKAGES=`$PYTHON -c 'from distutils.sysconfig import get_python_lib; print(get_python_lib())'`
-   BUILD_PYTHON_INC=`$PYTHON -c "from distutils import sysconfig; print sysconfig.get_python_inc()"`
-   BUILD_PYTHON_LIB=python$PYTHON_VERSION
-   GLUPY_SUBDIR=glupy
-   GLUPY_SUBDIR_MAKEFILE=xlators/features/glupy/Makefile
-   GLUPY_SUBDIR_SRC_MAKEFILE=xlators/features/glupy/src/Makefile
-   echo "building glupy with -isystem $BUILD_PYTHON_INC -l $BUILD_PYTHON_LIB"
-   AC_SUBST(BUILD_PYTHON_SITE_PACKAGES)
-   AC_SUBST(BUILD_PYTHON_INC)
-   AC_SUBST(BUILD_PYTHON_LIB)
-   AC_SUBST(GLUPY_SUBDIR)
-   AC_SUBST(GLUPY_SUBDIR_MAKEFILE)
-   AC_SUBST(GLUPY_SUBDIR_SRC_MAKEFILE)
+        echo "building glupy with -isystem $BUILD_PYTHON_INC -l $BUILD_PYTHON_LIB"
+
+        AC_SUBST(PYTHONDEV_CPPFLAGS)
+        AC_SUBST(PYTHONDEV_LDFLAGS)
+        AC_SUBST(BUILD_PYTHON_SITE_PACKAGES)
+        AC_SUBST(BUILD_PYTHON_INC)
+        AC_SUBST(BUILD_PYTHON_LIB)
+        AC_SUBST(GLUPY_SUBDIR)
+        AC_SUBST(GLUPY_SUBDIR_MAKEFILE)
+        AC_SUBST(GLUPY_SUBDIR_SRC_MAKEFILE)
+    fi
 fi
-# end glupy section
+dnl end glupy section
 
 dnl Check for userspace-rcu
-PKG_CHECK_MODULES([URCU], [liburcu-bp])
+PKG_CHECK_MODULES([URCU], [liburcu-bp], [],
+  [AC_CHECK_HEADERS([urcu-bp.h],
+     [URCU_LIBS='-lurcu-bp'],
+     AC_MSG_ERROR([liburcu-bp not found]))])
 PKG_CHECK_MODULES([URCU_CDS], [liburcu-cds >= 0.8], [],
   [PKG_CHECK_MODULES([URCU_CDS], [liburcu-cds >= 0.7],
-    [AC_DEFINE(URCU_0_7, 1, [Define if liburcu 0.7 is found])],
-    [AC_MSG_ERROR([liburcu >= 0.7 required])])])
+    [AC_DEFINE(URCU_OLD, 1, [Define if liburcu 0.6 or 0.7 is found])],
+    [AC_CHECK_HEADERS([urcu/cds.h],
+      [AC_DEFINE(URCU_OLD, 1, [Define if liburcu 0.6 or 0.7 is found])
+       URCU_CDS_LIBS='-lurcu-cds'],
+      [AC_MSG_ERROR([liburcu-cds not found])])])])
 
 BUILD_UNITTEST="no"
 AC_ARG_ENABLE([cmocka],
@@ -1276,8 +1268,22 @@ AC_SUBST(UNITTEST_LDFLAGS)
 AC_SUBST(CFLAGS)
 # end enable debug section
 
+# experimental section
+AC_ARG_ENABLE([experimental],
+              AC_HELP_STRING([--disable-experimental],
+                             [Disable building experimental xlators]))
+
+BUILD_EXPERIMENTAL="yes"
+if test "x$enable_experimental" = "xno"; then
+  BUILD_EXPERIMENTAL="no"
+fi
+AM_CONDITIONAL([ENABLE_EXPERIMENTAL], [test x$BUILD_EXPERIMENTAL = xyes])
+#end experimental section
+
 dnl libglusterfs.so uses math functions
 GF_LDADD="${GF_LDADD} ${MATH_LIB}"
+
+GF_XLATOR_DEFAULT_LDFLAGS='-avoid-version -export-symbols $(top_srcdir)/xlators/xlator.sym'
 
 AC_SUBST(GF_HOST_OS)
 AC_SUBST(GF_CFLAGS)
@@ -1289,6 +1295,7 @@ AC_SUBST(RLLIBS)
 AC_SUBST(LIBAIO)
 AC_SUBST(AM_MAKEFLAGS)
 AC_SUBST(AM_LIBTOOLFLAGS)
+AC_SUBST(GF_XLATOR_DEFAULT_LDFLAGS)
 
 CONTRIBDIR='$(top_srcdir)/contrib'
 AC_SUBST(CONTRIBDIR)
@@ -1358,7 +1365,6 @@ echo "readline             : $BUILD_READLINE"
 echo "georeplication       : $BUILD_SYNCDAEMON"
 echo "Linux-AIO            : $BUILD_LIBAIO"
 echo "Enable Debug         : $BUILD_DEBUG"
-## echo "systemtap            : $BUILD_SYSTEMTAP"
 echo "Block Device xlator  : $BUILD_BD_XLATOR"
 echo "glupy                : $BUILD_GLUPY"
 echo "Use syslog           : $USE_SYSLOG"
@@ -1369,4 +1375,5 @@ echo "Unit Tests           : $BUILD_UNITTEST"
 echo "POSIX ACLs           : $BUILD_POSIX_ACLS"
 echo "Data Classification  : $BUILD_GFDB"
 echo "firewalld-config     : $BUILD_FIREWALLD"
+echo "Experimental xlators : $BUILD_EXPERIMENTAL"
 echo

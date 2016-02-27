@@ -161,7 +161,7 @@ up_readv_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         }
         flags = UP_UPDATE_CLIENT;
         upcall_cache_invalidate (frame, this, client, local->inode, flags,
-                                 NULL, NULL, NULL);
+                                 stbuf, NULL, NULL);
 
 out:
         UPCALL_STACK_UNWIND (readv, frame, op_ret, op_errno, vector,
@@ -626,7 +626,7 @@ up_mkdir_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         /* invalidate parent's entry too */
         flags = UP_TIMES;
         upcall_cache_invalidate (frame, this, client, local->inode, flags,
-                                 stbuf, postparent, NULL);
+                                 postparent, NULL, NULL);
 
 out:
         UPCALL_STACK_UNWIND (mkdir, frame, op_ret, op_errno,
@@ -687,7 +687,7 @@ up_create_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         /* However invalidate parent's entry */
         flags = UP_TIMES;
         upcall_cache_invalidate (frame, this, client, local->inode, flags,
-                                 stbuf, postparent, NULL);
+                                 postparent, NULL, NULL);
 
 out:
         UPCALL_STACK_UNWIND (create, frame, op_ret, op_errno, fd,
@@ -747,7 +747,7 @@ up_lookup_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         }
         flags = UP_UPDATE_CLIENT;
         upcall_cache_invalidate (frame, this, client, local->inode, flags,
-                                 NULL, NULL, NULL);
+                                 stbuf, NULL, NULL);
 
 out:
         UPCALL_STACK_UNWIND (lookup, frame, op_ret, op_errno, inode, stbuf,
@@ -804,7 +804,7 @@ up_stat_cbk (call_frame_t *frame, void *cookie,
         }
         flags = UP_UPDATE_CLIENT;
         upcall_cache_invalidate (frame, this, client, local->inode, flags,
-                                 NULL, NULL, NULL);
+                                 buf, NULL, NULL);
 
 out:
         UPCALL_STACK_UNWIND (stat, frame, op_ret, op_errno, buf,
@@ -970,7 +970,7 @@ up_readlink_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         }
         flags = UP_UPDATE_CLIENT;
         upcall_cache_invalidate (frame, this, client, local->inode, flags,
-                                 NULL, NULL, NULL);
+                                 stbuf, NULL, NULL);
 
 out:
         UPCALL_STACK_UNWIND (readlink, frame, op_ret, op_errno, path, stbuf,
@@ -1030,7 +1030,7 @@ up_mknod_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         /* invalidate parent's entry too */
         flags = UP_TIMES;
         upcall_cache_invalidate (frame, this, client, local->inode, flags,
-                                 buf, postparent, NULL);
+                                 postparent, NULL, NULL);
 
 out:
         UPCALL_STACK_UNWIND (mknod, frame, op_ret, op_errno, inode, buf,
@@ -1090,7 +1090,7 @@ up_symlink_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
         /* invalidate parent's entry too */
         flags = UP_TIMES;
         upcall_cache_invalidate (frame, this, client, local->inode, flags,
-                                 buf, postparent, NULL);
+                                 postparent, NULL, NULL);
 
 out:
         UPCALL_STACK_UNWIND (symlink, frame, op_ret, op_errno, inode, buf,
@@ -1522,6 +1522,62 @@ err:
         return 0;
 }
 
+
+int32_t
+up_seek_cbk (call_frame_t *frame, void *cookie, xlator_t *this, int op_ret,
+             int op_errno, off_t offset, dict_t *xdata)
+{
+        client_t         *client        = NULL;
+        uint32_t         flags          = 0;
+        upcall_local_t   *local         = NULL;
+
+        EXIT_IF_UPCALL_OFF (this, out);
+
+        client = frame->root->client;
+        local = frame->local;
+
+        if ((op_ret < 0) || !local) {
+                goto out;
+        }
+        flags = UP_UPDATE_CLIENT;
+        upcall_cache_invalidate (frame, this, client, local->inode, flags,
+                                 NULL, NULL, NULL);
+
+out:
+        UPCALL_STACK_UNWIND (seek, frame, op_ret, op_errno, offset, xdata);
+
+        return 0;
+}
+
+
+int32_t
+up_seek (call_frame_t *frame, xlator_t *this, fd_t *fd, off_t offset,
+         gf_seek_what_t what, dict_t *xdata)
+{
+        int32_t          op_errno        = -1;
+        upcall_local_t   *local          = NULL;
+
+        EXIT_IF_UPCALL_OFF (this, out);
+
+        local = upcall_local_init (frame, this, fd->inode);
+        if (!local) {
+                op_errno = ENOMEM;
+                goto err;
+        }
+
+out:
+        STACK_WIND (frame, up_seek_cbk, FIRST_CHILD(this),
+                    FIRST_CHILD(this)->fops->seek, fd, offset, what, xdata);
+
+        return 0;
+
+err:
+        UPCALL_STACK_UNWIND (seek, frame, -1, op_errno, 0, NULL);
+
+        return 0;
+}
+
+
 int32_t
 mem_acct_init (xlator_t *this)
 {
@@ -1758,6 +1814,7 @@ struct xlator_fops fops = {
         .readlink    = up_readlink,
         .readv       = up_readv,
         .lk          = up_lk,
+        .seek        = up_seek,
 
         /* fops doing  write */
         .truncate    = up_truncate,

@@ -16,6 +16,7 @@
 #include "protocol-common.h"
 #include "xlator.h"
 #include "logging.h"
+#include "syscall.h"
 #include "timer.h"
 #include "defaults.h"
 #include "compat.h"
@@ -43,7 +44,6 @@
 #include <sys/resource.h>
 #include <inttypes.h>
 
-#include "defaults.c"
 #include "common-utils.h"
 
 #include "globals.h"
@@ -307,6 +307,15 @@ _build_option_key (dict_t *d, char *k, data_t *v, void *tmp)
                     (strcmp (k, "features.soft-limit") == 0))
                         return 0;
         }
+
+        /* snap-max-hard-limit and snap-max-soft-limit are system   *
+         * options set and managed by snapshot config option. Hence *
+         * they should not be displayed in gluster volume info.     *
+         */
+        if ((strcmp (k, "snap-max-hard-limit") == 0) ||
+            (strcmp (k, "snap-max-soft-limit") == 0))
+                return 0;
+
         snprintf (reconfig_key, 256, "volume%d.option.%s",
                   pack->vol_count, k);
         ret = dict_set_str (pack->dict, reconfig_key, v->data);
@@ -353,6 +362,12 @@ glusterd_add_tier_volume_detail_to_dict (glusterd_volinfo_t *volinfo,
                 goto out;
 
         memset (key, 0, sizeof (key));
+        snprintf (key, 256, "volume%d.cold_arbiter_count", count);
+        ret = dict_set_int32 (dict, key, volinfo->arbiter_count);
+        if (ret)
+                goto out;
+
+        memset (key, 0, sizeof (key));
         snprintf (key, 256, "volume%d.cold_disperse_count", count);
         ret = dict_set_int32 (dict, key,
                               volinfo->tier_info.cold_disperse_count);
@@ -387,6 +402,53 @@ glusterd_add_tier_volume_detail_to_dict (glusterd_volinfo_t *volinfo,
 out:
         return ret;
 
+}
+
+int
+glusterd_add_arbiter_info_to_bricks (glusterd_volinfo_t *volinfo,
+                                     dict_t *volumes, int count)
+{
+        char                    key[256]    = {0, };
+        int                     i           = 0;
+        int                     start_index = 0;
+        int                     ret         = 0;
+
+        if (volinfo->type == GF_CLUSTER_TYPE_TIER) {
+                /*TODO: Add info for hot tier once attach tier of arbiter
+                 * volumes is supported. */
+
+                /* cold tier */
+                if (volinfo->tier_info.cold_replica_count == 1 ||
+                    volinfo->arbiter_count != 1)
+                        return 0;
+
+                i = start_index = volinfo->tier_info.hot_brick_count + 1;
+                for (; i <= volinfo->brick_count; i++) {
+                        if ((i - start_index + 1) %
+                            volinfo->tier_info.cold_replica_count != 0)
+                                continue;
+                        memset (key, 0, sizeof (key));
+                        snprintf (key, 256, "volume%d.brick%d.isArbiter",
+                                  count, i);
+                        ret = dict_set_int32 (volumes, key, 1);
+                        if (ret)
+                                return ret;
+                }
+        } else {
+                if (volinfo->replica_count == 1 || volinfo->arbiter_count != 1)
+                        return 0;
+                for (i = 1; i <= volinfo->brick_count; i++) {
+                        if (i % volinfo->replica_count != 0)
+                                continue;
+                        memset (key, 0, sizeof (key));
+                        snprintf (key, 256, "volume%d.brick%d.isArbiter",
+                                  count, i);
+                        ret = dict_set_int32 (volumes, key, 1);
+                        if (ret)
+                                return ret;
+                }
+        }
+        return 0;
 }
 
 int
@@ -468,6 +530,11 @@ glusterd_add_volume_detail_to_dict (glusterd_volinfo_t *volinfo,
 
         snprintf (key, 256, "volume%d.redundancy_count", count);
         ret = dict_set_int32 (volumes, key, volinfo->redundancy_count);
+        if (ret)
+                goto out;
+
+        snprintf (key, sizeof (key), "volume%d.arbiter_count", count);
+        ret = dict_set_int32 (volumes, key, volinfo->arbiter_count);
         if (ret)
                 goto out;
 
@@ -605,6 +672,9 @@ glusterd_add_volume_detail_to_dict (glusterd_volinfo_t *volinfo,
 #endif
                 i++;
         }
+        ret = glusterd_add_arbiter_info_to_bricks (volinfo, volumes, count);
+        if (ret)
+                goto out;
 
         dict = volinfo->dict;
         if (!dict) {
@@ -786,7 +856,7 @@ __glusterd_handle_cluster_lock (rpcsvc_request_t *req)
         int32_t                         ret         = -1;
         gd1_mgmt_cluster_lock_req       lock_req    = {{0},};
         glusterd_op_lock_ctx_t         *ctx         = NULL;
-        glusterd_op_t                   op          = GD_OP_EVENT_LOCK;
+        glusterd_op_sm_event_type_t     op          = GD_OP_EVENT_LOCK;
         glusterd_op_info_t              txn_op_info = {{0},};
         glusterd_conf_t                *priv        = NULL;
         uuid_t                         *txn_id      = NULL;
@@ -877,9 +947,9 @@ glusterd_handle_cluster_lock (rpcsvc_request_t *req)
                                             __glusterd_handle_cluster_lock);
 }
 
-int
+static int
 glusterd_req_ctx_create (rpcsvc_request_t *rpc_req,
-                         glusterd_op_t op, uuid_t uuid,
+                         int op, uuid_t uuid,
                          char *buf_val, size_t buf_len,
                          gf_gld_mem_types_t mem_type,
                          glusterd_req_ctx_t **req_ctx_out)
@@ -2204,6 +2274,9 @@ __glusterd_handle_fsm_log (rpcsvc_request_t *req)
 
         GF_ASSERT (req);
 
+        this = THIS;
+        GF_VALIDATE_OR_GOTO ("xlator", (this != NULL), out);
+
         ret = xdr_to_generic (req->msg[0], &cli_req,
                               (xdrproc_t)xdr_gf1_cli_fsm_log_req);
         if (ret < 0) {
@@ -2223,7 +2296,6 @@ __glusterd_handle_fsm_log (rpcsvc_request_t *req)
         }
 
         if (strcmp ("", cli_req.name) == 0) {
-                this = THIS;
                 conf = this->private;
                 ret = glusterd_sm_tr_log_add_to_dict (dict, &conf->op_sm_log);
         } else {
@@ -2847,6 +2919,9 @@ __glusterd_handle_probe_query (rpcsvc_request_t *req)
 
         GF_ASSERT (req);
 
+        this = THIS;
+        GF_VALIDATE_OR_GOTO ("xlator", (this != NULL), out);
+
         ret = xdr_to_generic (req->msg[0], &probe_req,
                               (xdrproc_t)xdr_gd1_mgmt_probe_req);
         if (ret < 0) {
@@ -2857,8 +2932,6 @@ __glusterd_handle_probe_query (rpcsvc_request_t *req)
                 req->rpc_err = GARBAGE_ARGS;
                 goto out;
         }
-
-        this = THIS;
 
         conf = this->private;
         if (probe_req.port)
@@ -3216,12 +3289,12 @@ __glusterd_handle_umount (rpcsvc_request_t *req)
         synclock_lock (&priv->big_lock);
         if (rsp.op_ret == 0) {
                 if (realpath (umnt_req.path, mntp))
-                        rmdir (mntp);
+                        sys_rmdir (mntp);
                 else {
                         rsp.op_ret = -1;
                         rsp.op_errno = errno;
                 }
-                if (unlink (umnt_req.path) != 0) {
+                if (sys_unlink (umnt_req.path) != 0) {
                         rsp.op_ret = -1;
                         rsp.op_errno = errno;
                 }
@@ -3806,8 +3879,9 @@ set_probe_error_str (int op_ret, int op_errno, char *op_errstr, char *errstr,
         } else {
                 switch (op_errno) {
                         case GF_PROBE_ANOTHER_CLUSTER:
-                                snprintf (errstr, len, "%s is already part of "
-                                          "another cluster", hostname);
+                                snprintf (errstr, len, "%s is either already "
+                                          "part of another cluster or having "
+                                          "volumes configured", hostname);
                                 break;
 
                         case GF_PROBE_VOLUME_CONFLICT:
@@ -4880,6 +4954,7 @@ __glusterd_brick_rpc_notify (struct rpc_clnt *rpc, void *mydata,
 
                         break;
                 }
+                rpc_clnt_set_connected (&rpc->conn);
                 gf_msg_debug (this->name, 0, "Connected to %s:%s",
                         brickinfo->hostname, brickinfo->path);
                 glusterd_set_brick_status (brickinfo, GF_BRICK_STARTED);
@@ -4888,6 +4963,7 @@ __glusterd_brick_rpc_notify (struct rpc_clnt *rpc, void *mydata,
                 break;
 
         case RPC_CLNT_DISCONNECT:
+                rpc_clnt_unset_connected (&rpc->conn);
                 if (glusterd_is_brick_started (brickinfo))
                         gf_msg (this->name, GF_LOG_INFO, 0,
                                 GD_MSG_BRICK_DISCONNECTED,

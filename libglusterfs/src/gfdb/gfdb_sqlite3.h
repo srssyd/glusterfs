@@ -47,7 +47,6 @@ do {\
                 "(GF_ID TEXT NOT NULL, "\
                 "GF_PID TEXT NOT NULL, "\
                 "FNAME TEXT NOT NULL, "\
-                "FPATH TEXT NOT NULL, "\
                 "W_DEL_FLAG INTEGER NOT NULL DEFAULT 0, "\
                 "LINK_UPDATE INTEGER NOT NULL DEFAULT 0, "\
                 "PRIMARY KEY ( GF_ID, GF_PID, FNAME) "\
@@ -55,7 +54,6 @@ do {\
                 "COMMIT;"\
                 );;\
 } while (0)
-
 
 #define GF_COL_TB_WSEC          GF_FILE_TABLE "." GF_COL_WSEC
 #define GF_COL_TB_WMSEC         GF_FILE_TABLE "." GF_COL_WMSEC
@@ -143,7 +141,8 @@ do {\
 #define GF_SQLITE3_SET_PRAGMA(sqlite3_config_str, param_key, format, value,\
                         ret, error)\
 do {\
-        sprintf(sqlite3_config_str, "PRAGMA " param_key " = " format , value);\
+        sprintf (sqlite3_config_str, "PRAGMA %s = " format ,  param_key,\
+                value);\
         ret = sqlite3_exec (sql_conn->sqlite3_db_conn, sqlite3_config_str,\
                 NULL, NULL, NULL);\
         if (ret != SQLITE_OK) {\
@@ -170,7 +169,7 @@ do {\
 #define GF_SQL_DEFAULT_CACHE_SIZE               "1000"
 #define GF_SQL_DEFAULT_WAL_AUTOCHECKPOINT       "1000"
 #define GF_SQL_DEFAULT_JOURNAL_MODE             GF_SQL_JM_WAL
-#define GF_SQL_DEFAULT_SYNC                     GF_SQL_SYNC_NORMAL
+#define GF_SQL_DEFAULT_SYNC                     GF_SQL_SYNC_OFF
 #define GF_SQL_DEFAULT_AUTO_VACUUM              GF_SQL_AV_NONE
 
 
@@ -281,6 +280,48 @@ int gf_sqlite3_find_recently_changed_files_freq (void *db_conn,
 
 int gf_sqlite3_clear_files_heat (void *db_conn);
 
+/* Function to extract version of sqlite db
+ * Input:
+ * void *db_conn        : Sqlite connection
+ * char **version  : the version is extracted as a string and will be stored in
+ *                   this variable. The freeing of the memory should be done by
+ *                   the caller.
+ * Return:
+ *      On success return the lenght of the version string that is
+ *      extracted.
+ *      On failure return -1
+ * */
+int gf_sqlite3_version (void *db_conn, char **version);
+
+/* Function to extract PRAGMA or setting from sqlite db
+ * Input:
+ * void *db_conn        : Sqlite connection
+ * char *pragma_key     : PRAGMA or setting to be extracted
+ * char **pragma_value  : the value of the PRAGMA or setting that is
+ *                        extracted. This function will allocate memory
+ *                        to pragma_value. The caller should free the memory
+ * Return:
+ *      On success return the lenght of the pragma/setting value that is
+ *      extracted.
+ *      On failure return -1
+ * */
+int gf_sqlite3_pragma (void *db_conn, char *pragma_key, char **pragma_value);
+
+/* Function to set PRAGMA to sqlite db
+ * Input:
+ * void *db_conn        : Sqlite connection
+ * char *pragma_key     : PRAGMA to be set
+ * char *pragma_value   : the value of the PRAGMA
+ * Return:
+ *      On success return 0
+ *      On failure return -1
+ * */
+int
+gf_sqlite3_set_pragma (void *db_conn, char *pragma_key, char *pragma_value);
+
+
+
 void gf_sqlite3_fill_db_operations (gfdb_db_operations_t  *gfdb_db_ops);
+
 
 #endif

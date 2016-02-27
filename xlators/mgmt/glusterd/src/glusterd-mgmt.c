@@ -24,6 +24,7 @@
 #include "glusterd-snapshot-utils.h"
 #include "glusterd-messages.h"
 #include "glusterd-errno.h"
+#include "glusterd-hooks.h"
 
 extern struct rpc_clnt_program gd_mgmt_v3_prog;
 
@@ -179,6 +180,25 @@ gd_mgmt_v3_pre_validate_fn (glusterd_op_t op, dict_t *dict,
                         goto out;
                 }
                 break;
+        case GD_OP_ADD_BRICK:
+                ret = glusterd_op_stage_add_brick (dict, op_errstr, rsp_dict);
+                if (ret) {
+                        gf_msg (this->name, GF_LOG_WARNING, 0,
+                                GD_MSG_PRE_VALIDATION_FAIL,
+                                "ADD-brick prevalidation failed.");
+                        goto out;
+                }
+                break;
+        case GD_OP_START_VOLUME:
+                ret = glusterd_op_stage_start_volume (dict, op_errstr,
+                                                      rsp_dict);
+                if (ret) {
+                        gf_msg (this->name, GF_LOG_WARNING, 0,
+                                GD_MSG_PRE_VALIDATION_FAIL,
+                                "Volume start prevalidation failed.");
+                        goto out;
+                }
+                break;
 
         default:
                 break;
@@ -240,6 +260,7 @@ gd_mgmt_v3_commit_fn (glusterd_op_t op, dict_t *dict,
         GF_VALIDATE_OR_GOTO (this->name, op_errno, out);
         GF_ASSERT (rsp_dict);
 
+        glusterd_op_commit_hook (op, dict, GD_COMMIT_HOOK_PRE);
         switch (op) {
                case GD_OP_SNAP:
                {
@@ -264,6 +285,31 @@ gd_mgmt_v3_commit_fn (glusterd_op_t op, dict_t *dict,
                         }
                         break;
                 }
+                case GD_OP_ADD_BRICK:
+                {
+                        ret = glusterd_op_add_brick (dict, op_errstr);
+                        if (ret) {
+                                gf_msg (this->name, GF_LOG_ERROR, 0,
+                                        GD_MSG_COMMIT_OP_FAIL,
+                                        "Add-brick commit failed.");
+                                goto out;
+                        }
+                        break;
+
+                }
+                case GD_OP_START_VOLUME:
+                {
+                        ret = glusterd_op_start_volume (dict, op_errstr);
+                        if (ret) {
+                                gf_msg (this->name, GF_LOG_ERROR, 0,
+                                        GD_MSG_COMMIT_OP_FAIL,
+                                        "Volume start commit failed.");
+                                goto out;
+                        }
+                        break;
+
+                }
+
                default:
                        break;
         }
@@ -278,14 +324,20 @@ int32_t
 gd_mgmt_v3_post_validate_fn (glusterd_op_t op, int32_t op_ret, dict_t *dict,
                              char **op_errstr, dict_t *rsp_dict)
 {
-        int32_t       ret = -1;
-        xlator_t     *this = NULL;
+        int32_t                  ret       = -1;
+        xlator_t                *this      = NULL;
+        char                    *volname   = NULL;
+        glusterd_volinfo_t      *volinfo   = NULL;
+
 
         this = THIS;
         GF_ASSERT (this);
         GF_ASSERT (dict);
         GF_ASSERT (op_errstr);
         GF_ASSERT (rsp_dict);
+
+        if (op_ret == 0)
+            glusterd_op_commit_hook (op, dict, GD_COMMIT_HOOK_POST);
 
         switch (op) {
                case GD_OP_SNAP:
@@ -301,8 +353,66 @@ gd_mgmt_v3_post_validate_fn (glusterd_op_t op, int32_t op_ret, dict_t *dict,
                        }
                        break;
                }
+               case GD_OP_ADD_BRICK:
+               {
+                        ret = dict_get_str (dict, "volname", &volname);
+                        if (ret) {
+                                gf_msg ("glusterd", GF_LOG_ERROR, 0,
+                                        GD_MSG_DICT_GET_FAILED, "Unable to get"
+                                        " volume name");
+                                goto out;
+                        }
+
+                        ret = glusterd_volinfo_find (volname, &volinfo);
+                        if (ret) {
+                                gf_msg ("glusterd", GF_LOG_ERROR, EINVAL,
+                                        GD_MSG_VOL_NOT_FOUND, "Unable to "
+                                        "allocate memory");
+                                goto out;
+                        }
+                        ret = glusterd_create_volfiles_and_notify_services (
+                                                                     volinfo);
+                        if (ret)
+                                goto out;
+                        ret = glusterd_store_volinfo (volinfo,
+                                            GLUSTERD_VOLINFO_VER_AC_INCREMENT);
+                        if (ret)
+                                goto out;
+                        break;
+
+               }
+               case GD_OP_START_VOLUME:
+               {
+                        ret = dict_get_str (dict, "volname", &volname);
+                        if (ret) {
+                                gf_msg ("glusterd", GF_LOG_ERROR, 0,
+                                        GD_MSG_DICT_GET_FAILED, "Unable to get"
+                                        " volume name");
+                                goto out;
+                        }
+
+                        ret = glusterd_volinfo_find (volname, &volinfo);
+                        if (ret) {
+                                gf_msg ("glusterd", GF_LOG_ERROR, EINVAL,
+                                        GD_MSG_VOL_NOT_FOUND, "Unable to "
+                                        "allocate memory");
+                                goto out;
+                        }
+
+                        if (volinfo->type == GF_CLUSTER_TYPE_TIER) {
+                                if (volinfo->rebal.op != GD_OP_REMOVE_BRICK) {
+                                        glusterd_defrag_info_set (volinfo, dict,
+                                                  GF_DEFRAG_CMD_START_TIER,
+                                                  GF_DEFRAG_CMD_START,
+                                                  GD_OP_REBALANCE);
+                                }
+                                glusterd_restart_rebalance_for_volume (volinfo);
+                        }
+                        break;
+               }
+
                default:
-                       break;
+                        break;
         }
 
         ret = 0;
@@ -556,6 +666,16 @@ glusterd_pre_validate_aggr_rsp_dict (glusterd_op_t op,
                                 GD_MSG_PRE_VALIDATION_FAIL,
                                 "Failed to aggregate prevalidate "
                                 "response dictionaries.");
+                        goto out;
+                }
+                break;
+        case GD_OP_START_VOLUME:
+        case GD_OP_ADD_BRICK:
+                ret = glusterd_aggr_brick_mount_dirs (aggr, rsp);
+                if (ret) {
+                        gf_msg (this->name, GF_LOG_ERROR, 0,
+                                GD_MSG_BRICK_MOUNDIRS_AGGR_FAIL, "Failed to "
+                                "aggregate brick mount dirs");
                         goto out;
                 }
                 break;
@@ -857,6 +977,8 @@ glusterd_mgmt_v3_build_payload (dict_t **req, char **op_errstr, dict_t *dict,
                 case GD_OP_SNAP:
                         dict_copy (dict, req_dict);
                         break;
+                case GD_OP_START_VOLUME:
+                case GD_OP_ADD_BRICK:
                 case GD_OP_REPLACE_BRICK:
                 {
                         ret = dict_get_str (dict, "volname", &volname);
@@ -1881,9 +2003,8 @@ glusterd_mgmt_v3_initiate_all_phases (rpcsvc_request_t *req, glusterd_op_t op,
         }
 
         /* POST-COMMIT VALIDATE PHASE */
-        /* As of now, post_validate is not handling any other
-           commands other than snapshot. So as of now, I am
-           sending 0 (op_ret as 0).
+        /* As of now, post_validate is not trying to cleanup any failed
+           commands. So as of now, I am sending 0 (op_ret as 0).
         */
         ret = glusterd_mgmt_v3_post_validate (op, 0, dict, req_dict, &op_errstr,
                                               txn_generation);
