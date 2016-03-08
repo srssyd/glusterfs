@@ -61,11 +61,11 @@ DEBUG=${DEBUG:=0}             # turn on debugging?
 
 PROCESS_UP_TIMEOUT=20
 NFS_EXPORT_TIMEOUT=20
-CHILD_UP_TIMEOUT=20
+CHILD_UP_TIMEOUT=200
 PROBE_TIMEOUT=60
 REBALANCE_TIMEOUT=360
 REOPEN_TIMEOUT=20
-HEAL_TIMEOUT=80
+HEAL_TIMEOUT=200
 MARKER_UPDATE_TIMEOUT=20
 JANITOR_TIMEOUT=60
 UMOUNT_TIMEOUT=5
@@ -162,6 +162,7 @@ function test_footer()
                 echo "ok $t";
         else
                 echo "not ok $t $err";
+				echo "FAILED COMMAND: $saved_cmd"
                 # With DEBUG, this was already printed out, so skip it.
                 if [ x"$DEBUG" = x"0" ]; then
                         echo "FAILED COMMAND: $saved_cmd"
