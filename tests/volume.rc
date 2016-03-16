@@ -6,6 +6,13 @@ function volinfo_field()
     $CLI volume info $vol | grep "^$field: " | sed 's/.*: //';
 }
 
+function volume_get_field()
+{
+    local vol=$1
+    local field=$2
+    $CLI volume get $vol $field | tail -1 | awk '{print $2}'
+}
+
 
 function brick_count()
 {
@@ -550,7 +557,7 @@ function num_graphs
 function get_aux()
 {
 ##Check if a auxiliary mount is there
-df -h 2>&1 | grep -e "[[:space:]]/run/gluster/${V0}$" -e "[[:space:]]/var/run/gluster/${V0}$" -
+df -h 2>&1 | sed 's#/build/install##' | grep -e "[[:space:]]/run/gluster/${V0}$" -e "[[:space:]]/var/run/gluster/${V0}$" -
 
 if [ $? -eq 0 ]
 then
@@ -641,4 +648,14 @@ function scrub_status()
         local field=$2;
 
         $CLI volume bitrot $vol scrub status | grep "^$field: " | sed 's/.*: //';
+}
+
+function get_gfid_string {
+        local path=$1;
+        getfattr -n glusterfs.gfid.string $1 2>/dev/null \
+                    | grep glusterfs.gfid.string | cut -d '"' -f 2
+}
+
+function file_all_zeroes {
+        < $1 tr -d '\0' | read -n 1 || echo 1
 }

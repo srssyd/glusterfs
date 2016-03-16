@@ -152,6 +152,9 @@ class Popen(subprocess.Popen):
                     poe, _, _ = select(
                         [po.stderr for po in errstore], [], [], 1)
                 except (ValueError, SelectError):
+                    # stderr is already closed wait for some time before
+                    # checking next error
+                    time.sleep(0.5)
                     continue
                 for po in errstore:
                     if po.stderr not in poe:
@@ -164,6 +167,7 @@ class Popen(subprocess.Popen):
                         try:
                             fd = po.stderr.fileno()
                         except ValueError:  # file is already closed
+                            time.sleep(0.5)
                             continue
                         l = os.read(fd, 1024)
                         if not l:
@@ -666,11 +670,36 @@ class Server(object):
 
             errno_wrap(os.rmdir, [path], [ENOENT, ESTALE])
 
+        def rename_with_disk_gfid_confirmation(gfid, entry, en):
+            if not matching_disk_gfid(gfid, entry):
+                logging.error("RENAME ignored: "
+                              "source entry:%s(gfid:%s) does not match with "
+                              "on-disk gfid(%s), when attempting to rename "
+                              "to %s" %
+                              (entry, gfid, cls.gfid_mnt(entry), en))
+                return
+
+            cmd_ret = errno_wrap(os.rename,
+                                 [entry, en],
+                                 [ENOENT, EEXIST], [ESTALE])
+            collect_failure(e, cmd_ret)
+
+
         for e in entries:
             blob = None
             op = e['op']
             gfid = e['gfid']
             entry = e['entry']
+            uid = 0
+            gid = 0
+            if e.get("stat", {}):
+                # Copy UID/GID value and then reset to zero. Copied UID/GID
+                # will be used to run chown once entry is created.
+                uid = e['stat']['uid']
+                gid = e['stat']['gid']
+                e['stat']['uid'] = 0
+                e['stat']['gid'] = 0
+
             (pg, bname) = entry2pb(entry)
             if op in ['RMDIR', 'UNLINK']:
                 # Try once, if rmdir failed with ENOTEMPTY
@@ -694,11 +723,19 @@ class Server(object):
                         logging.warn("Failed to remove %s => %s/%s. %s" %
                                      (gfid, pg, bname, os.strerror(er)))
             elif op in ['CREATE', 'MKNOD']:
-                blob = entry_pack_reg(
-                    gfid, bname, e['mode'], e['uid'], e['gid'])
+                slink = os.path.join(pfx, gfid)
+                st = lstat(slink)
+                # don't create multiple entries with same gfid
+                if isinstance(st, int):
+                    blob = entry_pack_reg(
+                        gfid, bname, e['mode'], e['uid'], e['gid'])
             elif op == 'MKDIR':
-                blob = entry_pack_mkdir(
-                    gfid, bname, e['mode'], e['uid'], e['gid'])
+                slink = os.path.join(pfx, gfid)
+                st = lstat(slink)
+                # don't create multiple entries with same gfid
+                if isinstance(st, int):
+                    blob = entry_pack_mkdir(
+                        gfid, bname, e['mode'], e['uid'], e['gid'])
             elif op == 'LINK':
                 slink = os.path.join(pfx, gfid)
                 st = lstat(slink)
@@ -726,16 +763,31 @@ class Server(object):
                             (pg, bname) = entry2pb(en)
                             blob = entry_pack_reg_stat(gfid, bname, e['stat'])
                 else:
-                    cmd_ret = errno_wrap(os.rename,
-                                         [entry, en],
-                                         [ENOENT, EEXIST], [ESTALE])
-                    collect_failure(e, cmd_ret)
+                    st1 = lstat(en)
+                    if isinstance(st1, int):
+                        rename_with_disk_gfid_confirmation(gfid, entry, en)
+                    else:
+                        if st.st_ino == st1.st_ino:
+                            # we have a hard link, we can now unlink source
+                            os.unlink(entry)
+                        else:
+                            rename_with_disk_gfid_confirmation(gfid, entry, en)
             if blob:
                 cmd_ret = errno_wrap(Xattr.lsetxattr,
                                      [pg, 'glusterfs.gfid.newfile', blob],
                                      [EEXIST, ENOENT],
                                      [ESTALE, EINVAL])
                 collect_failure(e, cmd_ret)
+
+                # If UID/GID is different than zero that means we are trying
+                # create Entry with different UID/GID. Create Entry with
+                # UID:0 and GID:0, and then call chown to set UID/GID
+                if uid != 0 or gid != 0:
+                    path = os.path.join(pfx, gfid)
+                    cmd_ret = errno_wrap(os.chown, [path, uid, gid], [ENOENT],
+                                         [ESTALE, EINVAL])
+                collect_failure(e, cmd_ret)
+
         return failures
 
     @classmethod

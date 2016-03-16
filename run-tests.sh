@@ -4,9 +4,15 @@
 
 export TZ=UTC
 force="no"
+head="yes"
 retry="no"
 tests=""
 exit_on_failure="yes"
+skip_bad_tests="yes"
+skip_known_bugs="yes"
+section_separator="========================================"
+
+OSTYPE=$(uname -s)
 
 function check_dependencies()
 {
@@ -153,37 +159,68 @@ function match()
         return $match
 }
 
-# If you're submitting a fix related to one of these tests and want its result
-# to be considered, you'll need to remove it from the list as part of your
-# patch.
-function is_bad_test ()
+# Tests can have comment lines with some comma separated values within them.
+# Key names used to determine test status are
+# G_TESTDEF_TEST_STATUS_CENTOS6
+# G_TESTDEF_TEST_STATUS_NETBSD7
+# Some examples:
+# G_TESTDEF_TEST_STATUS_CENTOS6=BAD_TEST,BUG=123456
+# G_TESTDEF_TEST_STATUS_NETBSD7=KNOWN_ISSUE,BUG=4444444
+# G_TESTDEF_TEST_STATUS_CENTOS6=BAD_TEST,BUG=123456;555555
+# You can change status of test to enabled or delete the line only if all the
+# bugs are closed or modified or if the patch fixes it.
+function get_test_status ()
 {
-    local name=$1
-    for bt in ./tests/basic/quota-anon-fd-nfs.t \
-              ./tests/bugs/quota/bug-1235182.t \
-              ./tests/basic/quota-nfs.t \
-              ./tests/basic/tier/tier_lookup_heal.t \
-              ./tests/basic/tier/bug-1214222-directories_missing_after_attach_tier.t \
-              ./tests/basic/tier/fops-during-migration.t \
-              ./tests/basic/tier/record-metadata-heat.t \
-	      ./tests/basic/tier/tier-snapshot.t \
-              ./tests/bugs/snapshot/bug-1109889.t \
-              ./tests/bugs/distribute/bug-1066798.t \
-              ./tests/bugs/glusterd/bug-1238706-daemons-stop-on-peer-cleanup.t \
-              ./tests/geo-rep/georep-basic-dr-rsync.t \
-              ./tests/geo-rep/georep-basic-dr-tarssh.t \
-              ./tests/bugs/fuse/bug-924726.t \
-              ./tests/basic/afr/split-brain-healing.t \
-              ./tests/basic/afr/replace-brick-self-heal.t \
-              ./tests/bugs/snapshot/bug-1140162-file-snapshot-features-encrypt-opts-validation.t \
-              ./tests/bugs/tier/bug-1286974.t \
-              ./tests/features/weighted-rebalance.t \
-              ./tests/performance/open-behind.t \
-              ./tests/basic/afr/self-heald.t \
-              ; do
-        [ x"$name" = x"$bt" ] && return 0 # bash: zero means true/success
-    done
-    return 1				  # bash: non-zero means false/failure
+    local test_name=$1
+    local host_os=""
+    local result=""
+
+    host_os=$(uname -s)
+
+    case "$host_os" in
+    # Leaving out the logic to determine the particular distro and version
+    # for later. Why does the key have the distro and version then?
+    # Because changing the key in all test files would be very big process
+    # updating just this function with a better logic much simpler.
+    Linux)
+        result=$(grep -e "^#G_TESTDEF_TEST_STATUS_CENTOS6" $test_name | \
+                 awk -F"," {'print $1'} | awk -F"=" {'print $2'}) ;;
+    NetBSD)
+        result=$(grep -e "^#G_TESTDEF_TEST_STATUS_NETBSD7" $test_name | \
+                 awk -F"," {'print $1'} | awk -F"=" {'print $2'}) ;;
+    *)
+        result="ENABLED" ;;
+    esac
+
+    echo "$result"
+
+}
+
+function get_bug_list_for_disabled_test ()
+{
+    local test_name=$1
+    local host_os=""
+    local result=""
+
+    host_os=$(uname -s)
+
+    case "$host_os" in
+    # Leaving out the logic to determine the particular distro and version
+    # for later. Why does the key have the distro and version then?
+    # Because changing the key in all test files would be very big process
+    # updating just this function with a better logic much simpler.
+    Linux)
+        result=$(grep -e "^#G_TESTDEF_TEST_STATUS_CENTOS6" $test_name | \
+                 awk -F"," {'print $2'} | awk -F"=" {'print $2'}) ;;
+    NetBSD)
+        result=$(grep -e "^#G_TESTDEF_TEST_STATUS_NETBSD7" $test_name | \
+                 awk -F"," {'print $2'} | awk -F"=" {'print $2'}) ;;
+    *)
+        result="0000000" ;;
+    esac
+
+    echo "$result"
+
 }
 
 function run_tests()
@@ -191,25 +228,47 @@ function run_tests()
     RES=0
     FAILED=''
     GENERATED_CORE=''
+    total_tests=0
+    selected_tests=0
+    skipped_bad_tests=0
+    skipped_known_issue_tests=0
+    total_run_tests=0
 
     # key = path of .t file; value = time taken to run the .t file
     declare -A ELAPSEDTIMEMAP
 
     for t in $(find ${regression_testsdir}/tests -name '*.t' \
                | LC_COLLATE=C sort) ; do
-	old_cores=$(ls /core.* 2> /dev/null | wc -l)
+        old_cores=$(ls /core.* 2> /dev/null | wc -l)
+        total_tests=$((total_tests+1))
         if match $t "$@" ; then
+            selected_tests=$((selected_tests+1))
             echo
-            echo "=================================================="
-	    if is_bad_test $t; then
+            echo $section_separator$section_separator
+            if [[ $(get_test_status $t) == "BAD_TEST" ]] && \
+               [[ $skip_bad_tests == "yes" ]]
+            then
+                skipped_bad_tests=$((skipped_bad_tests+1))
                 echo "Skipping bad test file $t"
-                echo "=================================================="
+                echo "Reason: bug(s):" $(get_bug_list_for_disabled_test $t)
+                echo $section_separator$section_separator
                 echo
                 continue
             fi
-            echo "Running tests in file $t"
+            if [[ $(get_test_status $t) == "KNOWN_ISSUE" ]] && \
+               [[ $skip_known_bugs == "yes" ]]
+            then
+                skipped_known_issue_tests=$((skipped_known_issue_tests+1))
+                echo "Skipping test file $t due to known issue"
+                echo "Reason: bug(s):" $(get_bug_list_for_disabled_test $t)
+                echo $section_separator$section_separator
+                echo
+                continue
+            fi
+            total_run_tests=$((total_run_tests+1))
+            echo "[$(date +%H:%M:%S)] Running tests in file $t"
             starttime="$(date +%s)"
-            prove -mf --timer $t
+            prove -vf $t
             TMP_RES=$?
             ELAPSEDTIMEMAP[$t]=`expr $(date +%s) - $starttime`
             if [ ${TMP_RES} -ne 0 ]  && [ "x${retry}" = "xyes" ] ; then
@@ -221,7 +280,7 @@ function run_tests()
                 echo "       * we got some spurous failures  *"
                 echo "       *********************************"
                 echo ""
-                prove -mf --timer $t
+                prove -vf $t
                 TMP_RES=$?
             fi
             if [ ${TMP_RES} -ne 0 ] ; then
@@ -236,7 +295,7 @@ function run_tests()
                 GENERATED_CORE="${GENERATED_CORE}${t} "
             fi
             echo "End of test $t"
-            echo "=================================================="
+            echo $section_separator$section_separator
             echo
             if [ $RES -ne 0 ] && [ x"$exit_on_failure" = "xyes" ] ; then
                 break;
@@ -245,33 +304,67 @@ function run_tests()
     done
     echo
     echo "Run complete"
+    echo $section_separator$section_separator
+    echo "Number of tests found:                             $total_tests"
+    echo "Number of tests selected for run based on pattern: $selected_tests"
+    echo "Number of tests skipped as they were marked bad:   $skipped_bad_tests"
+    echo "Number of tests skipped because of known_issues:   $skipped_known_issue_tests"
+    echo "Number of tests that were run:                     $total_run_tests"
     if [ ${RES} -ne 0 ] ; then
         FAILED=$( echo ${FAILED} | tr ' ' '\n' | sort -u )
         FAILED_COUNT=$( echo -n "${FAILED}" | grep -c '^' )
-        echo -e "$FAILED_COUNT test(s) failed \n${FAILED}"
+        echo -e "\n$FAILED_COUNT test(s) failed \n${FAILED}"
         GENERATED_CORE=$( echo  ${GENERATED_CORE} | tr ' ' '\n' | sort -u )
         GENERATED_CORE_COUNT=$( echo -n "${GENERATED_CORE}" | grep -c '^' )
-        echo -e "$GENERATED_CORE_COUNT test(s) generated core \n${GENERATED_CORE}"
+        echo -e "\n$GENERATED_CORE_COUNT test(s) generated core \n${GENERATED_CORE}"
     fi
 
-    echo "Slowest 10 tests: "
+    echo
+    echo "Tests ordered by time taken, slowest to fastest: "
+    echo $section_separator$section_separator
     for key in "${!ELAPSEDTIMEMAP[@]}"
     do
-        echo $key ' - ' ${ELAPSEDTIMEMAP["$key"]}
-    done | sort -rn -k3 | head
+        echo "$key  -  ${ELAPSEDTIMEMAP["$key"]} second"
+    done | sort -rn -k3
 
+    echo
     echo "Result is $RES"
+    echo
     return ${RES}
 }
 
+function run_head_tests()
+{
+    [ -d ${regression_testsdir}/.git ] || return 0
+
+    # The git command needs $cwd to be within the repository, but run_tests
+    # needs it to be back where we started.
+    pushd $regression_testsdir
+    git_cmd="git diff-tree --no-commit-id --name-only --diff-filter=ACMRTUXB"
+    htests=$($git_cmd -r HEAD tests | grep '.t$')
+    popd
+    [ -n "$htests" ] || return 0
+
+    # Perhaps it's not ideal that we'll end up re-running these tests, but the
+    # gains from letting them fail fast in the first round should outweigh the
+    # losses from running them again in the second.  OTOH, with so many of our
+    # tests being non-deterministic, maybe it doesn't hurt to give the newest
+    # tests an extra workout.
+    run_tests "$htests"
+}
+
 function parse_args () {
-    args=`getopt frc "$@"`
+    args=`getopt frcbkhH "$@"`
     set -- $args
     while [ $# -gt 0 ]; do
         case "$1" in
         -f)    force="yes" ;;
+        -h)    head="no" ;;
+        -H)    head="only" ;;
         -r)    retry="yes" ;;
         -c)    exit_on_failure="no" ;;
+        -b)    skip_bad_tests="no" ;;
+        -k)    skip_known_bugs="no" ;;
         --)    shift; break;;
         esac
         shift
@@ -297,4 +390,9 @@ check_dependencies
 check_location
 
 # Run the tests
-run_tests "$tests"
+if [ x"$head" != x"no" ]; then
+        run_head_tests || exit 1
+fi
+if [ x"$head" != x"only" ]; then
+        run_tests "$tests" || exit 1
+fi

@@ -1075,6 +1075,11 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .op_version = 1,
           .flags      = OPT_FLAG_CLIENT_OPT
         },
+        { .key        = "disperse.eager-lock",
+          .voltype    = "cluster/disperse",
+          .op_version = GD_OP_VERSION_3_7_10,
+          .flags      = OPT_FLAG_CLIENT_OPT
+        },
         { .key        = "cluster.quorum-type",
           .voltype    = "cluster/replicate",
           .option     = "quorum-type",
@@ -1119,6 +1124,14 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .op_version = GD_OP_VERSION_3_7_0,
           .flags      = OPT_FLAG_CLIENT_OPT
         },
+        { .key        = "cluster.heal-wait-queue-length",
+          .voltype    = "cluster/replicate",
+          .type       = DOC,
+          .op_version = GD_OP_VERSION_3_7_9,
+          .flags      = OPT_FLAG_CLIENT_OPT
+        },
+
+        /* stripe xlator options */
         { .key         = "cluster.stripe-block-size",
           .voltype     = "cluster/stripe",
           .option      = "block-size",
@@ -1397,6 +1410,14 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .op_version = 2,
           .flags      = OPT_FLAG_CLIENT_OPT
         },
+        { .key        = "performance.cache-swift-metadata",
+          .voltype    = "performance/md-cache",
+          .option     = "cache-swift-metadata",
+          .op_version = GD_OP_VERSION_3_7_10,
+          .description = "Cache swift metadata (user.swift.metadata xattr)",
+          .flags      = OPT_FLAG_CLIENT_OPT
+        },
+
 
  	/* Crypt xlator options */
 
@@ -2631,7 +2652,8 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .value      = "off",
           .option     = "!shard",
           .op_version = GD_OP_VERSION_3_7_0,
-          .flags      = OPT_FLAG_CLIENT_OPT
+          .description = "enable/disable sharding translator on the volume.",
+          .flags      = OPT_FLAG_CLIENT_OPT | OPT_FLAG_XLATOR_OPT
         },
         { .key        = "features.shard-block-size",
           .voltype    = "features/shard",

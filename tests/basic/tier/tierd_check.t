@@ -53,4 +53,11 @@ TEST $CLI volume tier $V0 start force
 
 EXPECT_WITHIN $PROCESS_UP_TIMEOUT "0" tier_daemon_check
 
+# To test fordetach start fail while the brick is down
+
+TEST pkill -f "$B0/hot/$V0"
+
+TEST ! $CLI volume tier $V0 detach start
+
 cleanup
+#G_TESTDEF_TEST_STATUS_NETBSD7=KNOWN_ISSUE,BUG=000000

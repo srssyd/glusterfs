@@ -1,11 +1,25 @@
 #/bin/bash
 
+# Try loading the config from any of the distro
+# specific configuration locations
+if [ -f /etc/sysconfig/ganesha ]
+        then
+        . /etc/sysconfig/ganesha
+fi
+if [ -f /etc/conf.d/ganesha ]
+        then
+        . /etc/conf.d/ganesha
+fi
+if [ -f /etc/default/ganesha ]
+        then
+        . /etc/default/ganesha
+fi
+
 declare -i EXPORT_ID
 GANESHA_DIR=${1%/}
 OPTION=$2
 VOL=$3
 CONF=
-CONFFILE=
 
 function find_rhel7_conf
 {
@@ -24,14 +38,9 @@ function find_rhel7_conf
          done
 }
 
-cfgline=$(grep ^CONFFILE= /etc/sysconfig/ganesha)
-eval $(echo ${cfgline} | grep -F ^CONFFILE=)
-
 if [ -z $CONFFILE ]
         then
-        cfgline=$(grep ^OPTIONS= /etc/sysconfig/ganesha)
-        eval $(echo ${cfgline} | grep -F ^OPTIONS=)
-        find_rhel7_conf $cfgline
+        find_rhel7_conf $OPTIONS
 
 fi
 
@@ -75,13 +84,14 @@ $GANESHA_DIR/exports/export.$VOL.conf
 --dest=org.ganesha.nfsd  /org/ganesha/nfsd/ExportMgr \
 org.ganesha.nfsd.exportmgr.AddExport  string:$GANESHA_DIR/exports/export.$VOL.conf \
 string:"EXPORT(Path=/$VOL)"
+        check_cmd_status `echo $?`
 }
 
 #This function removes an export dynamically(uses the export_id of the export)
 function dynamic_export_remove()
 {
         removed_id=`cat $GANESHA_DIR/exports/export.$VOL.conf |\
-grep Export_Id | cut -d " " -f8`
+grep Export_Id | cut -d ' ' -f8`
         check_cmd_status `echo $?`
         dbus-send --print-reply --system \
 --dest=org.ganesha.nfsd /org/ganesha/nfsd/ExportMgr \

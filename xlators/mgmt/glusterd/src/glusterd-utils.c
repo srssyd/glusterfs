@@ -675,6 +675,7 @@ glusterd_brickinfo_dup (glusterd_brickinfo_t *brickinfo,
 
         strcpy (dup_brickinfo->hostname, brickinfo->hostname);
         strcpy (dup_brickinfo->path, brickinfo->path);
+        strcpy (dup_brickinfo->real_path, brickinfo->real_path);
         strcpy (dup_brickinfo->device_path, brickinfo->device_path);
         strcpy (dup_brickinfo->fstype, brickinfo->fstype);
         strcpy (dup_brickinfo->mnt_opts, brickinfo->mnt_opts);
@@ -1068,6 +1069,7 @@ glusterd_brickinfo_new_from_brick (char *brick,
         int32_t                 ret           = -1;
         glusterd_brickinfo_t   *new_brickinfo = NULL;
         xlator_t               *this          = NULL;
+        char                    abspath[PATH_MAX] = {0};
 
         this = THIS;
         GF_ASSERT (this);
@@ -1102,9 +1104,22 @@ glusterd_brickinfo_new_from_brick (char *brick,
         ret = gf_canonicalize_path (path);
         if (ret)
                 goto out;
-
         strncpy (new_brickinfo->hostname, hostname, 1024);
         strncpy (new_brickinfo->path, path, 1024);
+
+        if (!realpath (new_brickinfo->path, abspath)) {
+                /* ENOENT indicates that brick path has not been created which
+                 * is a valid scenario */
+                if (errno != ENOENT) {
+                        gf_msg (this->name, GF_LOG_CRITICAL, errno,
+                                GD_MSG_BRICKINFO_CREATE_FAIL, "realpath () failed for "
+                                "brick %s. The underlying filesystem may be in bad "
+                                "state", new_brickinfo->path);
+                        ret = -1;
+                        goto out;
+                }
+        }
+        strncpy (new_brickinfo->real_path, abspath, strlen(abspath));
 
         *brickinfo = new_brickinfo;
 
@@ -1167,7 +1182,6 @@ glusterd_is_brickpath_available (uuid_t uuid, char *path)
         glusterd_conf_t         *priv      = NULL;
         gf_boolean_t            available  = _gf_false;
         char                    tmp_path[PATH_MAX+1] = {0};
-        char                    tmp_brickpath[PATH_MAX+1] = {0};
 
         priv = THIS->private;
 
@@ -1186,16 +1200,7 @@ glusterd_is_brickpath_available (uuid_t uuid, char *path)
                                          brick_list) {
                         if (gf_uuid_compare (uuid, brickinfo->uuid))
                                 continue;
-
-                        if (!realpath (brickinfo->path, tmp_brickpath)) {
-                            if (errno == ENOENT)
-                                strncpy (tmp_brickpath, brickinfo->path,
-                                         PATH_MAX);
-                            else
-                                goto out;
-                        }
-
-                        if (_is_prefix (tmp_brickpath, tmp_path))
+                        if (_is_prefix (brickinfo->real_path, tmp_path))
                                 goto out;
                 }
         }
@@ -3726,8 +3731,8 @@ glusterd_volume_disconnect_all_bricks (glusterd_volinfo_t *volinfo)
 }
 
 int32_t
-glusterd_volinfo_copy_brick_portinfo (glusterd_volinfo_t *new_volinfo,
-                                      glusterd_volinfo_t *old_volinfo)
+glusterd_volinfo_copy_brick_portinfo (glusterd_volinfo_t *old_volinfo,
+                                      glusterd_volinfo_t *new_volinfo)
 {
         char                    pidfile[PATH_MAX+1] = {0,};
         glusterd_brickinfo_t   *new_brickinfo       = NULL;
@@ -3743,9 +3748,6 @@ glusterd_volinfo_copy_brick_portinfo (glusterd_volinfo_t *new_volinfo,
         priv = this->private;
         GF_ASSERT (priv);
 
-        if (_gf_false == glusterd_is_volume_started (new_volinfo))
-                goto out;
-
         cds_list_for_each_entry (new_brickinfo, &new_volinfo->bricks,
                                  brick_list) {
                 ret = glusterd_volume_brickinfo_get (new_brickinfo->uuid,
@@ -3754,15 +3756,11 @@ glusterd_volinfo_copy_brick_portinfo (glusterd_volinfo_t *new_volinfo,
                                                      old_volinfo,
                                                      &old_brickinfo);
                 if (ret == 0) {
-                        GLUSTERD_GET_BRICK_PIDFILE (pidfile, old_volinfo,
-                                                    old_brickinfo, priv);
-                        if (gf_is_service_running (pidfile, NULL))
-                                new_brickinfo->port = old_brickinfo->port;
-
+                        new_brickinfo->port = old_brickinfo->port;
                 }
         }
-out:
         ret = 0;
+
         return ret;
 }
 
@@ -3845,21 +3843,16 @@ glusterd_delete_stale_volume (glusterd_volinfo_t *stale_volinfo,
                 }
         }
 
-        /* If stale volume is in started state, copy the port numbers of the
-         * local bricks if they exist in the valid volume information.
-         * stop stale bricks. Stale volume information is going to be deleted.
-         * Which deletes the valid brick information inside stale volinfo.
-         * We dont want brick_rpc_notify to access already deleted brickinfo.
-         * Disconnect all bricks from stale_volinfo (unconditionally), since
+        /* If stale volume is in started state, stop the stale bricks if the new
+         * volume is started else, stop all bricks.
+         * We dont want brick_rpc_notify to access already deleted brickinfo,
+         * so disconnect all bricks from stale_volinfo (unconditionally), since
          * they are being deleted subsequently.
          */
         if (glusterd_is_volume_started (stale_volinfo)) {
                 if (glusterd_is_volume_started (valid_volinfo)) {
                         (void) glusterd_volinfo_stop_stale_bricks (valid_volinfo,
                                                                    stale_volinfo);
-                        //Only valid bricks will be running now.
-                        (void) glusterd_volinfo_copy_brick_portinfo (valid_volinfo,
-                                                                     stale_volinfo);
 
                 } else {
                         (void) glusterd_stop_bricks (stale_volinfo);
@@ -3977,6 +3970,13 @@ glusterd_import_friend_volume (dict_t *peer_data, size_t count)
                 glusterd_volinfo_ref (old_volinfo);
                 (void) gd_check_and_update_rebalance_info (old_volinfo,
                                                            new_volinfo);
+
+                /* Copy brick ports from the old volinfo always. The old_volinfo
+                 * will be cleaned up and this information could be lost
+                 */
+                (void) glusterd_volinfo_copy_brick_portinfo (old_volinfo,
+                                                             new_volinfo);
+
                 (void) glusterd_delete_stale_volume (old_volinfo, new_volinfo);
                 glusterd_volinfo_unref (old_volinfo);
         }
@@ -10479,6 +10479,22 @@ glusterd_enable_default_options (glusterd_volinfo_t *volinfo, char *option)
                         }
                 }
 
+                if (!option || !strcmp ("features.ctr-enabled", option)) {
+                        if (volinfo->type == GF_CLUSTER_TYPE_TIER) {
+                                ret = dict_set_dynstr_with_alloc (volinfo->dict,
+                                            "features.ctr-enabled", "on");
+                                if (ret) {
+                                        gf_msg (this->name, GF_LOG_ERROR, errno,
+                                                GD_MSG_DICT_SET_FAILED,
+                                                "Failed to set option "
+                                                "'features.ctr-enabled' "
+                                                "on volume %s",
+                                                volinfo->volname);
+                                        goto out;
+                                }
+                        }
+                }
+
         }
 out:
         return ret;
@@ -10636,9 +10652,13 @@ glusterd_get_default_val_for_volopt (dict_t *ctx, gf_boolean_t all_opts,
         char                    *def_val = NULL;
         char                     dict_key[50] = {0,};
         gf_boolean_t             key_found = _gf_false;
+        glusterd_conf_t         *priv = NULL;
 
         this = THIS;
         GF_ASSERT (this);
+
+        priv = this->private;
+        GF_VALIDATE_OR_GOTO (this->name, priv, out);
 
         GF_VALIDATE_OR_GOTO (this->name, vol_dict, out);
 
@@ -10654,19 +10674,23 @@ glusterd_get_default_val_for_volopt (dict_t *ctx, gf_boolean_t all_opts,
                 if (!all_opts && strcmp (vme->key, input_key))
                         continue;
                 key_found = _gf_true;
-                /* First look for the key in the vol_dict, if its not
-                 * present then look for translator default value */
-                ret = dict_get_str (vol_dict, vme->key, &def_val);
+                /* First look for the key in the priv->opts for global option
+                 * and then into vol_dict, if its not present then look for
+                 * translator default value */
+                ret = dict_get_str (priv->opts, vme->key, &def_val);
                 if (!def_val) {
-                        if (vme->value) {
-                                def_val = vme->value;
-                        } else {
-                                ret = glusterd_get_value_for_vme_entry
-                                         (vme, &def_val);
-                                if (!all_opts && ret)
-                                        goto out;
-                                else if (ret == -2)
-                                        continue;
+                        ret = dict_get_str (vol_dict, vme->key, &def_val);
+                        if (!def_val) {
+                                if (vme->value) {
+                                        def_val = vme->value;
+                                } else {
+                                        ret = glusterd_get_value_for_vme_entry
+                                                 (vme, &def_val);
+                                        if (!all_opts && ret)
+                                                goto out;
+                                        else if (ret == -2)
+                                                continue;
+                                }
                         }
                 }
                 count++;

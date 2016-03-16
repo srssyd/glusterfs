@@ -9,8 +9,8 @@ main (int argc, char *argv[])
         glfs_fd_t *fd = NULL;
         int        ret = 1;
 
-        if (argc != 4) {
-                fprintf (stderr, "Syntax: %s <host> <volname> <file-path> \n", argv[0]);
+        if (argc != 5) {
+                fprintf (stderr, "Syntax: %s <host> <volname> <file-path> <log-file>\n", argv[0]);
                 return 1;
         }
 
@@ -25,7 +25,7 @@ main (int argc, char *argv[])
                 fprintf (stderr, "glfs_set_volfile_server: retuned %d\n", ret);
                 goto out;
         }
-        ret = glfs_set_logging (fs, "/var/log/glusterfs/glfs-dis.log", 7);
+        ret = glfs_set_logging (fs, argv[4], 7);
         if (ret != 0) {
                 fprintf (stderr, "glfs_set_logging: returned %d\n", ret);
                 goto out;
@@ -49,11 +49,11 @@ main (int argc, char *argv[])
                 goto out;
         }
 
-        glfs_close(fd);
-
         ret = 0;
 
 out:
+        if (fd)
+                glfs_close(fd);
         glfs_fini (fs);
         return ret;
 }

@@ -3236,12 +3236,11 @@ fuse_setxattr (xlator_t *this, fuse_in_header_t *finh, void *msg)
                 }
         }
 
-        if (!priv->selinux) {
-                if (strcmp (name, "security.selinux") == 0) {
-                        send_fuse_err (this, finh, EOPNOTSUPP);
-                        GF_FREE (finh);
-                        return;
-                }
+        ret = fuse_check_selinux_cap_xattr (priv, name);
+        if (ret) {
+                send_fuse_err (this, finh, EOPNOTSUPP);
+                GF_FREE (finh);
+                return;
         }
 
         /* Check if the command is for changing the log
@@ -3535,6 +3534,7 @@ fuse_getxattr (xlator_t *this, fuse_in_header_t *finh, void *msg)
         int                      rv       = 0;
         int                     op_errno  = EINVAL;
         char                    *newkey   = NULL;
+        int                      ret      = 0;
 
         priv = this->private;
         GET_STATE (this, finh, state);
@@ -3566,11 +3566,10 @@ fuse_getxattr (xlator_t *this, fuse_in_header_t *finh, void *msg)
                 }
         }
 
-        if (!priv->selinux) {
-                if (strcmp (name, "security.selinux") == 0) {
-                        op_errno = ENODATA;
-                        goto err;
-                }
+        ret = fuse_check_selinux_cap_xattr (priv, name);
+        if (ret) {
+                op_errno = ENODATA;
+                goto err;
         }
 
         fuse_resolve_inode_init (state, &state->resolve, finh->nodeid);
@@ -5558,6 +5557,8 @@ init (xlator_t *this_xl)
 
         GF_OPTION_INIT ("selinux", priv->selinux, bool, cleanup_exit);
 
+        GF_OPTION_INIT ("capability", priv->capability, bool, cleanup_exit);
+
         GF_OPTION_INIT ("read-only", priv->read_only, bool, cleanup_exit);
 
         GF_OPTION_INIT ("enable-ino32", priv->enable_ino32, bool, cleanup_exit);
@@ -5891,6 +5892,10 @@ struct volume_options options[] = {
           "only for the trusted clients. For non trusted clients this value "
           "does not have any affect and the volume option for root-squash is "
           "honoured.",
+        },
+        { .key = {"capability"},
+          .type = GF_OPTION_TYPE_BOOL,
+          .default_value = "false"
         },
         { .key = {NULL} },
 };

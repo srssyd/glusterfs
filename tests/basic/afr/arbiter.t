@@ -12,6 +12,10 @@ TEST pidof glusterd
 TEST mkdir -p $B0/${V0}{0,1,2}
 TEST $CLI volume create $V0 replica 3 $H0:$B0/${V0}{0,1,2}
 TEST $CLI volume start $V0
+EXPECT 'Started' volinfo_field $V0 'Status'
+EXPECT_WITHIN $PROCESS_UP_TIMEOUT "1" brick_up_status $V0 $H0 $B0/${V0}0
+EXPECT_WITHIN $PROCESS_UP_TIMEOUT "1" brick_up_status $V0 $H0 $B0/${V0}1
+EXPECT_WITHIN $PROCESS_UP_TIMEOUT "1" brick_up_status $V0 $H0 $B0/${V0}2
 TEST glusterfs --volfile-id=$V0 --volfile-server=$H0 --entry-timeout=0 $M0;
 TEST ! stat $M0/.meta/graphs/active/$V0-replicate-0/options/arbiter-count
 EXPECT_WITHIN $UMOUNT_TIMEOUT "Y" force_umount $M0
@@ -28,9 +32,17 @@ TEST pidof glusterd
 TEST mkdir -p $B0/${V0}{0,1,2}
 TEST $CLI volume create $V0 replica 3 arbiter 1 $H0:$B0/${V0}{0,1,2}
 TEST $CLI volume set $V0 performance.write-behind off
+TEST $CLI volume set $V0 performance.stat-prefetch off
 TEST $CLI volume set $V0 cluster.self-heal-daemon off
+TEST $CLI volume set $V0 cluster.metadata-self-heal off
+TEST $CLI volume set $V0 cluster.data-self-heal off
+TEST $CLI volume set $V0 cluster.entry-self-heal off
 TEST $CLI volume start $V0
-TEST glusterfs --volfile-id=$V0 --volfile-server=$H0 --entry-timeout=0 $M0;
+EXPECT 'Started' volinfo_field $V0 'Status'
+EXPECT_WITHIN $PROCESS_UP_TIMEOUT "1" brick_up_status $V0 $H0 $B0/${V0}0
+EXPECT_WITHIN $PROCESS_UP_TIMEOUT "1" brick_up_status $V0 $H0 $B0/${V0}1
+EXPECT_WITHIN $PROCESS_UP_TIMEOUT "1" brick_up_status $V0 $H0 $B0/${V0}2
+TEST glusterfs --volfile-id=$V0 --volfile-server=$H0 --attribute-timeout=0 --entry-timeout=0 $M0;
 TEST stat $M0/.meta/graphs/active/$V0-replicate-0/options/arbiter-count
 EXPECT "1" cat $M0/.meta/graphs/active/$V0-replicate-0/options/arbiter-count
 
@@ -48,9 +60,11 @@ TEST kill_brick $V0 $H0 $B0/${V0}1
 echo "B2 is down, B3 is the only source, writes will fail" >> $M0/file
 EXPECT_NOT "0" echo $?
 TEST ! cat $M0/file
-# Metadata I/O should still succeed.
-TEST getfattr -n user.name $M0/file
-TEST setfattr -n user.name -v value3 $M0/file
+# Though metadata IO could have been served from arbiter, we do not allow it
+# anymore as FOPS like getfattr could be overloaded to return iatt buffers for
+# use by other translators.
+TEST ! getfattr -n user.name $M0/file
+TEST ! setfattr -n user.name -v value3 $M0/file
 
 #shd should not data self-heal from arbiter to the sinks.
 TEST $CLI volume set $V0 cluster.self-heal-daemon on
