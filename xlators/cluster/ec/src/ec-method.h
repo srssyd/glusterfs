@@ -33,7 +33,7 @@ size_t ec_method_encode(size_t size, uint32_t columns, uint32_t row,
                         uint8_t * in, uint8_t * out);
 size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
                         uint8_t ** in, uint8_t * out);
-size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_row,
+size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_row, uint8_t * rows,
                               uint8_t * in, uint8_t ** out);
 
 

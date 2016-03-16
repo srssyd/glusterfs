@@ -611,8 +611,10 @@ void *ec_dispatch_batch_mask_single_thread(void * data){
 	int32_t ec_fsync_cbk(call_frame_t *frame,void *cookie,xlator_t *this,int32_t op_ret,int32_t op_errno,struct iatt * prebuf,struct iatt* postbuf,dict_t * xdata);
 
 	pthread_mutex_lock(param->lock);
-	while (mask != 0) {
-		if ((mask & 1) != 0) {
+	while (mask != 0)
+    {
+		if ((mask & 1) != 0)
+        {
 			ec_trace("WIND", fop, "idx=%d", idx);
 
 			struct iovec vector[1];
@@ -653,6 +655,7 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 	struct iobref ** iobref_batch = malloc(sizeof(struct iobref*) *count * pipe_count);
 	struct iobuf ** iobuf_batch = malloc(sizeof(struct iobuf*) *count *pipe_count);
 	uint8_t ** out_ptr = malloc(sizeof(uint8_t *) *count *pipe_count);
+    uint8_t * rows = malloc(sizeof(uint8_t) * count);
 
 	gf_boolean_t use_cuda;
 
@@ -687,8 +690,10 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 
 	struct disptch_param *params=malloc(sizeof(struct disptch_param ) *pipe_count);
 
-	for(t=0;t<pipe_count;t++) {
-		for (i = 0; i < count; i++) {
+	for(t=0;t<pipe_count;t++)
+    {
+		for (i = 0; i < count; i++)
+        {
 			iobref_batch[t*count+i] = iobref_new();
 			if (iobref_batch[t*count+i] == NULL) {
 				goto out;
@@ -719,7 +724,23 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 				goto out;
 		}
 		else {
-			ec_method_batch_encode(size, ec->fragments, count, fop->vector[0].iov_base + total,
+
+            idx = 0;
+            int row_mask = mask;
+            i = 0;
+            while(row_mask != 0)
+            {
+                if((row_mask & 1) != 0)
+                {
+                    rows[i] = idx;
+                    i++;
+                }
+                idx ++;
+                row_mask >>= 1;
+            }
+
+
+			ec_method_batch_encode(size, ec->fragments, count,rows, fop->vector[0].iov_base + total,
 					out_ptr+t*count);
 		}
 		gettimeofday(&time,NULL);
@@ -752,26 +773,42 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 
 	free(params);
 
-	for(i=0;i<pipe_count * count;i++) {
-		if (iobuf_batch[i] != NULL) {
+
+
+	for(i=0;i<pipe_count * count;i++)
+    {
+		if (iobuf_batch[i] != NULL)
+        {
 			iobuf_unref(iobuf_batch[i]);
 		}
 	}
-	for(i=0;i<pipe_count * count;i++) {
-		if (iobref_batch[i] != NULL) {
+	for(i=0;i<pipe_count * count;i++)
+    {
+		if (iobref_batch[i] != NULL)
+        {
 			iobref_unref(iobref_batch[i]);
 		}
 	}
+
+    free(iobref_batch);
+    free(iobuf_batch);
+    free(out_ptr);
+    free(rows);
+
 	//printf("End of this writev. File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
 	return ;
 out:
-	for(i=0;i<pipe_count * count;i++) {
-		if (iobuf_batch[i] != NULL) {
+	for(i=0;i<pipe_count * count;i++)
+    {
+		if (iobuf_batch[i] != NULL)
+        {
 			iobuf_unref(iobuf_batch[i]);
 		}
 	}
-	for(i=0;i<pipe_count * count;i++) {
-		if (iobref_batch[i] != NULL) {
+	for(i=0;i<pipe_count * count;i++)
+    {
+		if (iobref_batch[i] != NULL)
+        {
 			iobref_unref(iobref_batch[i]);
 		}
 	}
@@ -779,6 +816,11 @@ out:
 	ec_writev_cbk(fop->frame, (void *)(uintptr_t)idx, fop->xl, -1, -err, NULL,
 			NULL, NULL);
 	//printf("End at ec_writev_cbk : File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
+
+    free(iobref_batch);
+    free(iobuf_batch);
+    free(out_ptr);
+    free(rows);
 }
 
 void ec_dispatch_start(ec_fop_data_t * fop)
