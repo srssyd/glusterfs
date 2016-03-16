@@ -124,6 +124,7 @@ struct ec_encode_batch_param{
     size_t size;
     uint32_t columns, total_rows, off;
     uint8_t * in;
+    uint8_t * rows;
     uint8_t ** out;
 };
 typedef struct ec_encode_batch_param ec_encode_batch_param_t;
@@ -137,6 +138,7 @@ static void* ec_method_batch_single_encode(void * param)
     uint32_t off = ec_param->off;
     uint8_t *in = ec_param->in,*in_ptr=NULL;
     uint8_t **out = ec_param->out;
+    uint8_t *rows = ec_param->rows;
 
     for(j = 0;j < size; j++){
         for (row = 0;row < total_row;row++){
@@ -145,14 +147,14 @@ static void* ec_method_batch_single_encode(void * param)
             in_ptr += EC_METHOD_CHUNK_SIZE;
             for (i = 1; i < columns; i++)
             {
-                ec_gf_muladd[row+1](out[row]+off+j*EC_METHOD_CHUNK_SIZE, in_ptr, EC_METHOD_WIDTH);
+                ec_gf_muladd[rows[row]+1](out[row]+off+j*EC_METHOD_CHUNK_SIZE, in_ptr, EC_METHOD_WIDTH);
                 in_ptr += EC_METHOD_CHUNK_SIZE;
             }
         }
         in += EC_METHOD_CHUNK_SIZE * columns;
     }
 }
-size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_rows, uint8_t * in, uint8_t ** out,int processor_count)
+size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_rows, uint8_t * rows,uint8_t * in, uint8_t ** out,int processor_count)
 {
     uint32_t i, j,off;
     pthread_t *threads = malloc(sizeof(pthread_t)*processor_count);
@@ -167,7 +169,8 @@ size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_rows
                 .total_rows = total_rows,
                 .in = in,
                 .out = out,
-                .off = off
+                .off = off,
+                .rows = rows
         };
         in += EC_METHOD_CHUNK_SIZE * params[i].size * columns;
         off += EC_METHOD_CHUNK_SIZE * params[i].size;

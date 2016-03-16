@@ -1432,7 +1432,7 @@ void ec_wind_writev(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
     if (err != 0) {
         goto out;
     }
-    GF_OPTION_INIT("encode/decode-threads",threads,int32,out);
+    GF_OPTION_INIT("coding-threads",threads,int32,out);
     ec_method_encode(size, ec->fragments, idx, fop->vector[0].iov_base,
                      iobuf->ptr,threads);
 
@@ -1483,7 +1483,12 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
             return EC_STATE_DELAYED_START;
 
         case EC_STATE_DELAYED_START:
-            ec_dispatch_batch(fop);
+            /* Restore uid, gid if they were changed to do some partial
+             * reads. */
+            fop->frame->root->uid = fop->uid;
+            fop->frame->root->gid = fop->gid;
+
+            ec_dispatch_batch_write(fop);
 
             return EC_STATE_PREPARE_ANSWER;
 
@@ -1494,7 +1499,7 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
                 size_t size;
 
                 ec_iatt_rebuild(fop->xl->private, cbk->iatt, 2,
-                        cbk->count);
+                                cbk->count);
 
                 /* This shouldn't fail because we have the inode locked. */
                 GF_ASSERT(ec_get_inode_size(fop, fop->fd->inode,
@@ -1543,10 +1548,17 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
 
             return EC_STATE_LOCK_REUSE;
 
+        case -EC_STATE_DELAYED_START:
+            /* We have failed while doing partial reads. We need to restore
+             * original uid, gid. */
+            fop->frame->root->uid = fop->uid;
+            fop->frame->root->gid = fop->gid;
+
+            /* Fall through */
+
         case -EC_STATE_INIT:
         case -EC_STATE_LOCK:
         case -EC_STATE_DISPATCH:
-        case -EC_STATE_DELAYED_START:
         case -EC_STATE_PREPARE_ANSWER:
         case -EC_STATE_REPORT:
             GF_ASSERT(fop->error != 0);

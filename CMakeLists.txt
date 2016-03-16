@@ -81,115 +81,7 @@ set(SOURCE_FILES
     contrib/macfuse/mount_darwin.c
     contrib/mount/mntent.c
     contrib/mount/mntent_compat.h
-    contrib/qemu/block/qcow.c
-    contrib/qemu/block/qcow2-cache.c
-    contrib/qemu/block/qcow2-cluster.c
-    contrib/qemu/block/qcow2-refcount.c
-    contrib/qemu/block/qcow2-snapshot.c
-    contrib/qemu/block/qcow2.c
-    contrib/qemu/block/qcow2.h
-    contrib/qemu/block/qed-check.c
-    contrib/qemu/block/qed-cluster.c
-    contrib/qemu/block/qed-gencb.c
-    contrib/qemu/block/qed-l2-cache.c
-    contrib/qemu/block/qed-table.c
-    contrib/qemu/block/qed.c
-    contrib/qemu/block/qed.h
-    contrib/qemu/block/snapshot.c
-    contrib/qemu/include/block/aio.h
-    contrib/qemu/include/block/block.h
-    contrib/qemu/include/block/block_int.h
-    contrib/qemu/include/block/blockjob.h
-    contrib/qemu/include/block/coroutine.h
-    contrib/qemu/include/block/coroutine_int.h
-    contrib/qemu/include/block/snapshot.h
-    contrib/qemu/include/exec/cpu-common.h
-    contrib/qemu/include/exec/hwaddr.h
-    contrib/qemu/include/exec/poison.h
-    contrib/qemu/include/fpu/softfloat.h
-    contrib/qemu/include/migration/migration.h
-    contrib/qemu/include/migration/qemu-file.h
-    contrib/qemu/include/migration/vmstate.h
-    contrib/qemu/include/monitor/monitor.h
-    contrib/qemu/include/monitor/readline.h
-    contrib/qemu/include/qapi/qmp/json-lexer.h
-    contrib/qemu/include/qapi/qmp/json-parser.h
-    contrib/qemu/include/qapi/qmp/json-streamer.h
-    contrib/qemu/include/qapi/qmp/qbool.h
-    contrib/qemu/include/qapi/qmp/qdict.h
-    contrib/qemu/include/qapi/qmp/qerror.h
-    contrib/qemu/include/qapi/qmp/qfloat.h
-    contrib/qemu/include/qapi/qmp/qint.h
-    contrib/qemu/include/qapi/qmp/qjson.h
-    contrib/qemu/include/qapi/qmp/qlist.h
-    contrib/qemu/include/qapi/qmp/qobject.h
-    contrib/qemu/include/qapi/qmp/qstring.h
-    contrib/qemu/include/qapi/qmp/types.h
-    contrib/qemu/include/qapi/error.h
-    contrib/qemu/include/qemu/aes.h
-    contrib/qemu/include/qemu/atomic.h
-    contrib/qemu/include/qemu/bitmap.h
-    contrib/qemu/include/qemu/bitops.h
-    contrib/qemu/include/qemu/bswap.h
-    contrib/qemu/include/qemu/compiler.h
-    contrib/qemu/include/qemu/error-report.h
-    contrib/qemu/include/qemu/event_notifier.h
-    contrib/qemu/include/qemu/hbitmap.h
-    contrib/qemu/include/qemu/host-utils.h
-    contrib/qemu/include/qemu/iov.h
-    contrib/qemu/include/qemu/main-loop.h
-    contrib/qemu/include/qemu/module.h
-    contrib/qemu/include/qemu/notify.h
-    contrib/qemu/include/qemu/option.h
-    contrib/qemu/include/qemu/option_int.h
-    contrib/qemu/include/qemu/osdep.h
-    contrib/qemu/include/qemu/queue.h
-    contrib/qemu/include/qemu/sockets.h
-    contrib/qemu/include/qemu/thread-posix.h
-    contrib/qemu/include/qemu/thread.h
-    contrib/qemu/include/qemu/timer.h
-    contrib/qemu/include/qemu/typedefs.h
-    contrib/qemu/include/sysemu/os-posix.h
-    contrib/qemu/include/sysemu/sysemu.h
-    contrib/qemu/include/config.h
-    contrib/qemu/include/glib-compat.h
-    contrib/qemu/include/qemu-common.h
-    contrib/qemu/include/trace.h
-    contrib/qemu/qobject/json-lexer.c
-    contrib/qemu/qobject/json-parser.c
-    contrib/qemu/qobject/json-streamer.c
-    contrib/qemu/qobject/qbool.c
-    contrib/qemu/qobject/qdict.c
-    contrib/qemu/qobject/qerror.c
-    contrib/qemu/qobject/qfloat.c
-    contrib/qemu/qobject/qint.c
-    contrib/qemu/qobject/qjson.c
-    contrib/qemu/qobject/qlist.c
-    contrib/qemu/qobject/qstring.c
-    contrib/qemu/trace/generated-tracers.h
-    contrib/qemu/util/aes.c
-    contrib/qemu/util/bitmap.c
-    contrib/qemu/util/bitops.c
-    contrib/qemu/util/cutils.c
-    contrib/qemu/util/error.c
-    contrib/qemu/util/hbitmap.c
-    contrib/qemu/util/hexdump.c
-    contrib/qemu/util/iov.c
-    contrib/qemu/util/module.c
-    contrib/qemu/util/oslib-posix.c
-    contrib/qemu/util/qemu-error.c
-    contrib/qemu/util/qemu-option.c
-    contrib/qemu/util/qemu-thread-posix.c
-    contrib/qemu/util/unicode.c
-    contrib/qemu/block.c
-    contrib/qemu/config-host.h
-    contrib/qemu/coroutine-ucontext.c
-    contrib/qemu/nop-symbols.c
-    contrib/qemu/qapi-types.h
-    contrib/qemu/qemu-coroutine-lock.c
-    contrib/qemu/qemu-coroutine-sleep.c
-    contrib/qemu/qemu-coroutine.c
-    contrib/qemu/qmp-commands.h
+
     contrib/rbtree/rb.c
     contrib/rbtree/rb.h
     contrib/stdlib/gf_mkostemp.c
@@ -496,8 +388,6 @@ set(SOURCE_FILES
     xlators/cluster/ec/src/ec-method.h
     xlators/cluster/ec/src/ec.c
     xlators/cluster/ec/src/ec.h
-    xlators/cluster/ec/src/thpool.c
-    xlators/cluster/ec/src/thpool.h
     xlators/cluster/ha/src/ha-helpers.c
     xlators/cluster/ha/src/ha-mem-types.h
     xlators/cluster/ha/src/ha.c
@@ -632,16 +522,6 @@ set(SOURCE_FILES
     xlators/features/protect/src/prot_client.c
     xlators/features/protect/src/prot_dht.c
     xlators/features/protect/src/prot_server.c
-    xlators/features/qemu-block/src/bdrv-xlator.c
-    xlators/features/qemu-block/src/bh-syncop.c
-    xlators/features/qemu-block/src/clock-timer.c
-    xlators/features/qemu-block/src/coroutine-synctask.c
-    xlators/features/qemu-block/src/monitor-logging.c
-    xlators/features/qemu-block/src/qb-coroutines.c
-    xlators/features/qemu-block/src/qb-coroutines.h
-    xlators/features/qemu-block/src/qemu-block-memory-types.h
-    xlators/features/qemu-block/src/qemu-block.c
-    xlators/features/qemu-block/src/qemu-block.h
     xlators/features/quiesce/src/quiesce-mem-types.h
     xlators/features/quiesce/src/quiesce.c
     xlators/features/quiesce/src/quiesce.h

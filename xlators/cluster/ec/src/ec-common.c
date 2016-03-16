@@ -543,8 +543,8 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
     struct iobref ** iobref_batch = malloc(sizeof(struct iobref*) *count);
     struct iobuf ** iobuf_batch = malloc(sizeof(struct iobuf*) *count);
     uint8_t ** out_ptr = malloc(sizeof(uint8_t *) *count);
+    uint8_t * rows = malloc(sizeof(uint8_t *) * count);
 
-    gf_boolean_t use_cuda;
     int32_t threads=1;
 
     int32_t ec_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
@@ -563,6 +563,7 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
     UNLOCK(&fop->lock);
 
     //fop->wind(ec,fop,0);
+
 
 
     for(i=0;i<count;i++) {
@@ -584,19 +585,24 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
     }
 
 
-    GF_OPTION_INIT("coding-cuda",use_cuda,bool,out);
-    if(use_cuda) {
-        err = ec_method_batch_encode_cuda(size, ec->fragments, count, fop->vector[0].iov_base,
-                                     out_ptr);
-        if (err < 0)
-            goto out;
-    }
-    else{
-        GF_OPTION_INIT("coding-threads",threads,int32,out);
 
-        ec_method_batch_encode(size, ec->fragments, count, fop->vector[0].iov_base,
-                                    out_ptr,threads);
+
+    GF_OPTION_INIT("coding-threads",threads,int32,out);
+
+    idx = 0;
+    int row_mask  = mask;
+    i = 0;
+    while (row_mask != 0)
+    {
+        if ((row_mask & 1) != 0)
+        {
+            rows[i] = idx;
+            i++;
+        }
+        idx++;
+        row_mask >>= 1;
     }
+    ec_method_batch_encode(size,ec->fragments,count,rows,fop->vector[0].iov_base,out_ptr,threads);
 
     idx = 0;
     i = 0;
@@ -609,7 +615,7 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
             struct iovec vector[1];
 
 
-            vector[0].iov_base = iobuf_batch[i]->ptr;
+            vector[0].iov_base = out_ptr[i];
             vector[0].iov_len = bufsize;
 
             iobuf_unref(iobuf_batch[i]);
@@ -619,12 +625,20 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
                     fop->fd, vector, 1, fop->offset / ec->fragments,
                     fop->uint32, iobref_batch[i], fop->xdata);
 
+
             iobref_unref(iobref_batch[i]);
+
             i++;
         }
         idx++;
         mask >>= 1;
     }
+
+    free(iobref_batch);
+    free(iobuf_batch);
+    free(out_ptr);
+    free(rows);
+
     return;
 
     out:
@@ -638,6 +652,11 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
                 iobref_unref(iobref_batch[i]);
             }
         }
+
+    free(iobref_batch);
+    free(iobuf_batch);
+    free(out_ptr);
+    free(rows);
 
     ec_writev_cbk(fop->frame, (void *)(uintptr_t)idx, fop->xl, -1, -err, NULL,
             NULL, NULL);
@@ -717,8 +736,11 @@ ec_dispatch_all (ec_fop_data_t *fop)
 }
 
 
-void ec_dispatch_batch(ec_fop_data_t *fop)
+void ec_dispatch_batch_write(ec_fop_data_t *fop)
 {
+    if(fop->id != GF_FOP_WRITE)
+        return;
+
     ec_dispatch_start(fop);
 
     if (ec_child_select(fop)) {

@@ -108,7 +108,7 @@ void ec_dispatch_all(ec_fop_data_t * fop);
 void ec_dispatch_inc(ec_fop_data_t * fop);
 void ec_dispatch_min(ec_fop_data_t * fop);
 void ec_dispatch_one(ec_fop_data_t * fop);
-void ec_dispatch_batch(ec_fop_data_t * fop);
+void ec_dispatch_batch_write(ec_fop_data_t * fop);
 
 void ec_sleep(ec_fop_data_t *fop);
 void ec_resume(ec_fop_data_t * fop, int32_t error);
