@@ -48,6 +48,8 @@ AM_CPPFLAGS += -I$(top_srcdir)/libglusterfs/src
 AM_CPPFLAGS += -I$(top_srcdir)/xlators/lib/src
 AM_CPPFLAGS += -I$(top_srcdir)/rpc/rpc-lib/src
 
+AM_CPPFLAGS += -msse4.2 -mavx -mavx2
+
 AM_CFLAGS = -Wall $(GF_CFLAGS)
 
 CLEANFILES =

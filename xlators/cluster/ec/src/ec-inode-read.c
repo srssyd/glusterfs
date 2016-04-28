@@ -1194,8 +1194,9 @@ int32_t ec_readv_rebuild(ec_t * ec, ec_fop_data_t * fop, ec_cbk_data_t * cbk)
 
         vector[0].iov_base = iobuf->ptr;
         if(use_cuda){
-            err = ec_method_decode_cuda(fsize, ec->fragments, values,
-                                        blocks, iobuf->ptr);
+            //err = ec_method_decode_cuda(fsize, ec->fragments, values,
+            //                            blocks, iobuf->ptr);
+            goto out;
             if(err<0)
                 goto out;
             vector[0].iov_len = err;

@@ -718,8 +718,9 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 
 		GF_OPTION_INIT("coding-cuda", use_cuda, bool, out);
 		if (use_cuda) {
-			err = ec_method_batch_encode_cuda(size, ec->fragments, count, fop->vector[0].iov_base + total,
-					out_ptr+t*count);
+			//err = ec_method_batch_encode_cuda(size, ec->fragments, count, fop->vector[0].iov_base + total,
+					//out_ptr+t*count);
+			goto out;
 			if (err < 0)
 				goto out;
 		}
