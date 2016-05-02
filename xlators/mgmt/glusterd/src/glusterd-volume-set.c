@@ -8,11 +8,6 @@
    cases as published by the Free Software Foundation.
 */
 
-#ifndef _CONFIG_H
-#define _CONFIG_H
-#include "config.h"
-#endif
-
 #include "glusterd-volgen.h"
 #include "glusterd-utils.h"
 
@@ -1080,11 +1075,6 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .op_version = 1,
           .flags      = OPT_FLAG_CLIENT_OPT
         },
-        { .key        = "disperse.eager-lock",
-          .voltype    = "cluster/disperse",
-          .op_version = GD_OP_VERSION_3_7_10,
-          .flags      = OPT_FLAG_CLIENT_OPT
-        },
         { .key        = "cluster.quorum-type",
           .voltype    = "cluster/replicate",
           .option     = "quorum-type",
@@ -1129,14 +1119,6 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .op_version = GD_OP_VERSION_3_7_0,
           .flags      = OPT_FLAG_CLIENT_OPT
         },
-        { .key        = "cluster.heal-wait-queue-length",
-          .voltype    = "cluster/replicate",
-          .type       = DOC,
-          .op_version = GD_OP_VERSION_3_7_10,
-          .flags      = OPT_FLAG_CLIENT_OPT
-        },
-
-        /* stripe xlator options */
         { .key         = "cluster.stripe-block-size",
           .voltype     = "cluster/stripe",
           .option      = "block-size",
@@ -1236,6 +1218,26 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .option     = "!log-flush-timeout",
           .op_version = GD_OP_VERSION_3_6_0,
           .flags      = OPT_FLAG_CLIENT_OPT
+        },
+        { .key         = "diagnostics.stats-dump-interval",
+          .voltype     = "debug/io-stats",
+          .option      = "ios-dump-interval",
+          .op_version  = 1
+        },
+        { .key         = "diagnostics.fop-sample-interval",
+          .voltype     = "debug/io-stats",
+          .option      = "ios-sample-interval",
+          .op_version  = 1
+        },
+        { .key         = "diagnostics.fop-sample-buf-size",
+          .voltype     = "debug/io-stats",
+          .option      = "ios-sample-buf-size",
+          .op_version  = 1
+        },
+        { .key         = "diagnostics.stats-dnscache-ttl-sec",
+          .voltype     = "debug/io-stats",
+          .option      = "ios-dnscache-ttl-sec",
+          .op_version  = 1
         },
 
         /* IO-cache xlator options */
@@ -1395,14 +1397,6 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .op_version = 2,
           .flags      = OPT_FLAG_CLIENT_OPT
         },
-        { .key        = "performance.cache-swift-metadata",
-          .voltype    = "performance/md-cache",
-          .option     = "cache-swift-metadata",
-          .op_version = GD_OP_VERSION_3_7_10,
-          .description = "Cache swift metadata (user.swift.metadata xattr)",
-          .flags      = OPT_FLAG_CLIENT_OPT
-        },
-
 
  	/* Crypt xlator options */
 
@@ -1641,6 +1635,12 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .voltype     = "rpc-transport/socket",
           .option     = "!ssl-ec-curve",
           .op_version = GD_OP_VERSION_3_7_4,
+        },
+        { .key         = "transport.address-family",
+          .voltype     = "protocol/server",
+          .option      = "!address-family",
+          .op_version  = GD_OP_VERSION_3_7_4,
+          .type        = NO_DOC,
         },
 
         /* Performance xlators enable/disbable options */
@@ -2631,8 +2631,7 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .value      = "off",
           .option     = "!shard",
           .op_version = GD_OP_VERSION_3_7_0,
-          .description = "enable/disable sharding translator on the volume.",
-          .flags      = OPT_FLAG_CLIENT_OPT | OPT_FLAG_XLATOR_OPT
+          .flags      = OPT_FLAG_CLIENT_OPT
         },
         { .key        = "features.shard-block-size",
           .voltype    = "features/shard",
@@ -2686,6 +2685,16 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .voltype     = "cluster/disperse",
           .op_version  = GD_OP_VERSION_3_7_3,
           .flags       = OPT_FLAG_CLIENT_OPT
+        },
+        { .key         = "disperse.coding-threads",
+          .voltype     = "cluster/disperse",
+          .op_version  = GD_OP_VERSION_3_7_3,
+        },
+        { .key        = "cluster.heal-timeout",
+          .voltype    = "cluster/disperse",
+          .option     = "!heal-timeout",
+          .op_version  = GD_OP_VERSION_3_7_3,
+          .type       = NO_DOC,
         },
         {
           .key         = "dht.force-readdirp",
