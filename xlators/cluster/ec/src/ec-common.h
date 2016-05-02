@@ -20,6 +20,9 @@ typedef enum {
         EC_METADATA_TXN
 } ec_txn_t;
 
+
+#define PIPE_COUNT  8
+
 #define EC_FOP_HEAL     -1
 #define EC_FOP_FHEAL    -2
 
@@ -108,6 +111,7 @@ void ec_dispatch_all(ec_fop_data_t * fop);
 void ec_dispatch_inc(ec_fop_data_t * fop);
 void ec_dispatch_min(ec_fop_data_t * fop);
 void ec_dispatch_one(ec_fop_data_t * fop);
+void ec_dispatch_batch(ec_fop_data_t * fop);
 
 void ec_sleep(ec_fop_data_t *fop);
 void ec_resume(ec_fop_data_t * fop, int32_t error);
@@ -116,5 +120,10 @@ void ec_resume_parent(ec_fop_data_t * fop, int32_t error);
 void ec_manager(ec_fop_data_t * fop, int32_t error);
 gf_boolean_t ec_is_recoverable_error (int32_t op_errno);
 void ec_handle_healers_done (ec_fop_data_t *fop);
+
+void ec_thpool_init(int num);
+
+inline int GET_REAL_PIPE_COUNT(ec_fop_data_t *fop);
+
 
 #endif /* __EC_COMMON_H__ */
