@@ -16,7 +16,6 @@ ec_sources += ec-gf.c
 ec_sources += ec-method.c
 ec_sources += ec-heal.c
 ec_sources += ec-heald.c
-ec_sources += ec-method-cuda.c
 ec_sources += thpool.c
 
 
