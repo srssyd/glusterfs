@@ -92,14 +92,14 @@ static void* ec_method_single_encode(void * param){
 				}
 				out += EC_METHOD_CHUNK_SIZE;
 		}
+        return NULL;
 }
 
 size_t ec_method_encode(size_t size, uint32_t columns, uint32_t row, uint8_t * in, uint8_t * out)
 {
-		uint32_t i, j;
+		uint32_t i;
 		uint8_t * in_ptr=in,*out_ptr=out;
 		size_t ori_size = size;
-		pthread_t *threads = malloc(sizeof(pthread_t)*processor_count);
 		ec_encode_param_t *params = malloc(sizeof(ec_encode_param_t)*processor_count);
 		size /= EC_METHOD_CHUNK_SIZE * columns;
 		row++;
@@ -147,7 +147,7 @@ struct ec_encode_batch_param{
 typedef struct ec_encode_batch_param ec_encode_batch_param_t;
 static void* ec_method_batch_single_encode(void * param)
 {
-	uint32_t i, j,row;
+	uint32_t i, j, row;
 	ec_encode_batch_param_t *ec_param = (ec_encode_batch_param_t *)param;
 	size_t size = ec_param->size;
 	uint32_t columns = ec_param->columns;
@@ -170,10 +170,11 @@ static void* ec_method_batch_single_encode(void * param)
 		}
 		in += EC_METHOD_CHUNK_SIZE * columns;
 	}
+    return NULL;
 }
 size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_rows, uint8_t * rows, uint8_t * in, uint8_t ** out)
 {
-		uint32_t i, j,off;
+		uint32_t i, off;
 		size_t ori_size = size;
 		ec_encode_batch_param_t *params = malloc(sizeof(ec_encode_batch_param_t)*processor_count);
 		size /= EC_METHOD_CHUNK_SIZE * columns;
@@ -248,7 +249,7 @@ void * ec_method_single_decode(void *param)
 		uint8_t *out = ec_param->out;
 		uint8_t *dummy = ec_param->dummy;
 		uint8_t **inv = ec_param->inv;
-		uint32_t i,j,k,last,value,f;
+		uint32_t i,j,last,value,f;
 		for (f = 0; f < size; f++)
 		{
 				for (i = 0; i < columns; i++)
@@ -274,12 +275,13 @@ void * ec_method_single_decode(void *param)
 				}
 				off += EC_METHOD_CHUNK_SIZE;
 		}
+        return NULL;
 }
 
 size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
 				uint8_t ** in, uint8_t * out)
 {
-		uint32_t i, j, k, off, last, value;
+		uint32_t i, j, k, off;
 		uint32_t f;
 		uint8_t **inv;
 		uint8_t **mtx;

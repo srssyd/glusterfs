@@ -123,7 +123,7 @@ void ec_handle_healers_done (ec_fop_data_t *fop);
 
 void ec_thpool_init(int num);
 
-inline int GET_REAL_PIPE_COUNT(ec_fop_data_t *fop);
+int GET_REAL_PIPE_COUNT(ec_fop_data_t *fop);
 
 
 #endif /* __EC_COMMON_H__ */

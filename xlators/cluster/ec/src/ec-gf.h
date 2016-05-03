@@ -15,15 +15,23 @@
 #define EC_GF_MOD 0x11D
 
 #define EC_GF_SIZE (1 << EC_GF_BITS)
-#define USE_AVX
 
-#ifdef USE_AVX
+#if defined (__AVX2__)
+#define USE_AVX
 #include <immintrin.h>
 #define encode_t __m256i
 #define XOR3(A,B,C) (A) = _mm256_xor_si256((B),(C))
 #define XOR4(A,B,C,D) (A) = _mm256_xor_si256(_mm256_xor_si256((B),(C)),(D))
 #define XOR5(A,B,C,D,E) (A) = _mm256_xor_si256(_mm256_xor_si256((B),(C)),_mm256_xor_si256((D),(E)))
+#elif defined (__AVX__)
+#define USE_AVX
+#include <immintrin.h>
+#define encode_t __m256
+#define XOR3(A,B,C) (A) = _mm256_xor_ps((B),(C))
+#define XOR4(A,B,C,D) (A) = _mm256_xor_ps(_mm256_xor_ps((B),(C)),(D))
+#define XOR5(A,B,C,D,E) (A) = _mm256_xor_ps(_mm256_xor_ps((B),(C)),_mm256_xor_ps((D),(E)))
 #else
+#warning NO SIMD is used.
 #define encode_t uint64_t
 #define XOR3(A,B,C) (A) = (B) ^ (C)
 #define XOR4(A,B,C,D) (A) = (B) ^ (C) ^ (D)

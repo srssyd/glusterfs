@@ -1144,10 +1144,8 @@ int32_t ec_readv_rebuild(ec_t * ec, ec_fop_data_t * fop, ec_cbk_data_t * cbk)
     struct iobref * iobref = NULL;
     struct iobuf * iobuf = NULL;
     uint8_t * buff = NULL, * ptr;
-    xlator_t *this = ec->xl;
     size_t fsize = 0, size = 0, max = 0;
-    gf_boolean_t use_cuda;
-    int32_t i = 0,threads=1;
+    int32_t i = 0;
     int64_t err = -ENOMEM;
 
     if (cbk->op_ret < 0) {
@@ -1191,7 +1189,6 @@ int32_t ec_readv_rebuild(ec_t * ec, ec_fop_data_t * fop, ec_cbk_data_t * cbk)
         }
 
         vector[0].iov_base = iobuf->ptr;
-        GF_OPTION_INIT("coding-threads",threads,int32,out);
         vector[0].iov_len = ec_method_decode(fsize, ec->fragments, values,
                 blocks, iobuf->ptr);
 

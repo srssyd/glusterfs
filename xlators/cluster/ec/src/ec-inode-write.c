@@ -1414,7 +1414,7 @@ void ec_wind_writev(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
     struct iobref * iobref = NULL;
     struct iobuf * iobuf = NULL;
     ssize_t size = 0, bufsize = 0;
-    int32_t err = -ENOMEM,threads=1;
+    int32_t err = -ENOMEM;
 
     iobref = iobref_new();
     if (iobref == NULL) {
@@ -1499,7 +1499,7 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
                 ec_iatt_rebuild(fop->xl->private, cbk->iatt, 2,
                         cbk->count);
 
-				printf("Before adjust:blocks_pre:%d blocks_after:%d size_pre:%d size_after:%d\n",cbk->iatt[0].ia_blocks,cbk->iatt[1].ia_blocks,cbk->iatt[0].ia_size,cbk->iatt[1].ia_size);
+				//printf("Before adjust:blocks_pre:%d blocks_after:%d size_pre:%d size_after:%d\n",cbk->iatt[0].ia_blocks,cbk->iatt[1].ia_blocks,cbk->iatt[0].ia_size,cbk->iatt[1].ia_size);
                 /* This shouldn't fail because we have the inode locked. */
                 GF_ASSERT(ec_get_inode_size(fop, fop->fd->inode,
                                             &cbk->iatt[0].ia_size));
@@ -1508,7 +1508,7 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
                 cbk->iatt[1].ia_size = cbk->iatt[0].ia_size;
 
                 size = fop->offset + fop->head + fop->user_size;
-                printf("Total size:%d\n",size);
+                printf("Total size:%u\n",size);
                 if (size > cbk->iatt[0].ia_size) {
                     /* Only update inode size if this is a top level fop.
                      * Otherwise this is an internal write and the top
@@ -1546,8 +1546,8 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
 
             if (fop->cbks.writev != NULL)
             {
-                printf("Final iatt :blocks_pre:%d blocks_after:%d size_pre:%d size_after:%d\n",cbk->iatt[0].ia_blocks,cbk->iatt[1].ia_blocks,cbk->iatt[0].ia_size,cbk->iatt[1].ia_size);
-                printf("Result returned: op_ret:%d op_errno:%d\n",cbk->op_ret,cbk->op_errno);
+                //printf("Final iatt :blocks_pre:%d blocks_after:%d size_pre:%d size_after:%d\n",cbk->iatt[0].ia_blocks,cbk->iatt[1].ia_blocks,cbk->iatt[0].ia_size,cbk->iatt[1].ia_size);
+                //printf("Result returned: op_ret:%d op_errno:%d\n",cbk->op_ret,cbk->op_errno);
                 fop->cbks.writev(fop->req_frame, fop, fop->xl, cbk->op_ret,
                                  cbk->op_errno, &cbk->iatt[0], &cbk->iatt[1],
                                  cbk->xdata);

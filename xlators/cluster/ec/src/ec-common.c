@@ -623,6 +623,7 @@ void *ec_dispatch_batch_mask_single_thread(void * data){
 	}
 	pthread_mutex_unlock(param->lock);
 
+    return NULL;
 }
 
 void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
@@ -630,9 +631,8 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 
 	int32_t i,t;
 	ec_t * ec = fop->xl->private;
-	xlator_t *this = ec->xl;
 	int32_t count = ec_bits_count(mask);
-	int32_t idx;
+	int32_t idx = 0;
 	ssize_t size = fop->vector[0].iov_len, bufsize = 0;
 	int32_t err = -ENOMEM;
 
