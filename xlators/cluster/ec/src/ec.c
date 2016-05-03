@@ -1357,12 +1357,6 @@ struct volume_options options[] =
       .default_value = "1",
       .description = "This option can be used to determine the number of threads to encode and decode"
     },
-    {
-      .key = {"coding-cuda"},
-      .type = GF_OPTION_TYPE_BOOL,
-      .default_value = "off",
-      .description = "This option can be used to determine whether to use GPU to encode and decode"
-    },
     { .key = {"read-policy" },
       .type = GF_OPTION_TYPE_STR,
       .value = {"round-robin", "gfid-hash"},

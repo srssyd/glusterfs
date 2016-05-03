@@ -1189,22 +1189,11 @@ int32_t ec_readv_rebuild(ec_t * ec, ec_fop_data_t * fop, ec_cbk_data_t * cbk)
         if (err != 0) {
             goto out;
         }
-        GF_OPTION_INIT("coding-cuda",use_cuda,bool,out);
-
 
         vector[0].iov_base = iobuf->ptr;
-        if(use_cuda){
-            //err = ec_method_decode_cuda(fsize, ec->fragments, values,
-            //                            blocks, iobuf->ptr);
-            goto out;
-            if(err<0)
-                goto out;
-            vector[0].iov_len = err;
-        }else{
-            GF_OPTION_INIT("coding-threads",threads,int32,out);
-            vector[0].iov_len = ec_method_decode(fsize, ec->fragments, values,
-                                                 blocks, iobuf->ptr);
-        }
+        GF_OPTION_INIT("coding-threads",threads,int32,out);
+        vector[0].iov_len = ec_method_decode(fsize, ec->fragments, values,
+                blocks, iobuf->ptr);
 
 
         iobuf_unref(iobuf);

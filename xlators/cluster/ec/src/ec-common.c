@@ -643,7 +643,6 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 	uint8_t ** out_ptr = malloc(sizeof(uint8_t *) *count *pipe_count);
     uint8_t * rows = malloc(sizeof(uint8_t) * count);
 
-	gf_boolean_t use_cuda;
 
 	int32_t ec_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
 			int32_t op_ret, int32_t op_errno, struct iatt *prestat,
@@ -702,36 +701,25 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 		printf("Begin to encode with pipe %d,timestamp %u.%u,size=%dMB\n",t,time.tv_sec,time.tv_usec,size>>20);
 
 
-		GF_OPTION_INIT("coding-cuda", use_cuda, bool, out);
-		if (use_cuda) {
-			//err = ec_method_batch_encode_cuda(size, ec->fragments, count, fop->vector[0].iov_base + total,
-					//out_ptr+t*count);
-			goto out;
-			if (err < 0)
-				goto out;
-		}
-		else {
-
-            idx = 0;
-            int row_mask = mask;
-            i = 0;
-            while(row_mask != 0)
+        idx = 0;
+        int row_mask = mask;
+        i = 0;
+        while(row_mask != 0)
+        {
+            if((row_mask & 1) != 0)
             {
-                if((row_mask & 1) != 0)
-                {
-                    rows[i] = idx;
-                    i++;
-                }
-                idx ++;
-                row_mask >>= 1;
+                rows[i] = idx;
+                i++;
             }
+            idx ++;
+            row_mask >>= 1;
+        }
 
 
-			ec_method_batch_encode(size, ec->fragments, count,rows, fop->vector[0].iov_base + total,
-					out_ptr+t*count);
-		}
-		gettimeofday(&time,NULL);
-		printf("Finish encode with pipe %d,timestamp %u.%u\n",t,time.tv_sec,time.tv_usec);
+        ec_method_batch_encode(size, ec->fragments, count,rows, fop->vector[0].iov_base + total,
+                out_ptr+t*count);
+        gettimeofday(&time,NULL);
+        printf("Finish encode with pipe %d,timestamp %u.%u\n",t,time.tv_sec,time.tv_usec);
 
 
 		struct disptch_param param;
