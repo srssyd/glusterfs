@@ -86,12 +86,25 @@ ec_combine_write (ec_fop_data_t *fop, ec_cbk_data_t *dst,
                 break;
         }
 
-        if (!ec_iatt_combine(fop, dst->iatt, src->iatt, valid)) {
+        if( fop->id == GF_FOP_WRITE){
+            if (!ec_iatt_combine_pipeline(fop, dst->iatt, src->iatt, valid)) {
                 gf_msg (fop->xl->name, GF_LOG_NOTICE, 0,
                         EC_MSG_IATT_MISMATCH,
                         "Mismatching iatt in "
                         "answers of '%s'", gf_fop_list[fop->id]);
                 return 0;
+            }
+        }
+        else{
+
+            if (!ec_iatt_combine(fop, dst->iatt, src->iatt, valid)) {
+                gf_msg (fop->xl->name, GF_LOG_NOTICE, 0,
+                        EC_MSG_IATT_MISMATCH,
+                        "Mismatching iatt in "
+                        "answers of '%s'", gf_fop_list[fop->id]);
+                return 0;
+
+            }
         }
         return 1;
 }
