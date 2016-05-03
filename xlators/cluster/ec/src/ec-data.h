@@ -271,8 +271,13 @@ struct _ec_cbk_data
     struct gf_flock  flock;
     struct iovec *   vector;
     struct iobref *  buffers;
+
     char            *str;
     gf_dirent_t      entries;
+    off_t            offset;
+    gf_seek_what_t   what;
+
+    uintptr_t        combined;
 };
 
 struct _ec_heal

@@ -16,6 +16,8 @@ ec_sources += ec-gf.c
 ec_sources += ec-method.c
 ec_sources += ec-heal.c
 ec_sources += ec-heald.c
+ec_sources += thpool.c
+
 
 ec_headers := ec.h
 ec_headers += ec-mem-types.h
@@ -41,6 +43,8 @@ AM_CPPFLAGS  = $(GF_CPPFLAGS)
 AM_CPPFLAGS += -I$(top_srcdir)/libglusterfs/src
 AM_CPPFLAGS += -I$(top_srcdir)/xlators/lib/src
 AM_CPPFLAGS += -I$(top_srcdir)/rpc/rpc-lib/src
+
+AM_CPPFLAGS += -msse4.2 -mavx -mavx2
 
 AM_CFLAGS = -Wall $(GF_CFLAGS)
 

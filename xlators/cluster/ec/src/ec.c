@@ -542,7 +542,10 @@ notify (xlator_t *this, int32_t event, void *data, ...)
 int32_t
 init (xlator_t *this)
 {
-    ec_t *ec          = NULL;
+
+    ec_t *ec = NULL;
+    int32_t threads=1;
+
     char *read_policy = NULL;
 
     if (this->parents == NULL)
@@ -598,7 +601,11 @@ init (xlator_t *this)
         goto failed;
     }
 
-    ec_method_initialize();
+    GF_OPTION_INIT("coding-threads",threads,int32,failed);
+    ec_method_initialize(threads);
+    ec_thpool_init(32);
+
+
     GF_OPTION_INIT ("self-heal-daemon", ec->shd.enabled, bool, failed);
     GF_OPTION_INIT ("iam-self-heal-daemon", ec->shd.iamshd, bool, failed);
     GF_OPTION_INIT ("eager-lock", ec->eager_lock, bool, failed);
@@ -1333,6 +1340,28 @@ struct volume_options options[] =
       .default_value = "128",
       .description = "This option can be used to control number of heals"
                      " that can wait",
+    },
+    { .key  = {"heal-timeout"},
+      .type = GF_OPTION_TYPE_INT,
+      .min  = 60,
+      .max  = INT_MAX,
+      .default_value = "600",
+      .description = "time interval for checking the need to self-heal "
+                     "in self-heal-daemon"
+    },
+    {
+      .key = {"coding-threads"},
+     .type = GF_OPTION_TYPE_INT,
+      .min = 1,
+      .max = 1024,
+      .default_value = "1",
+      .description = "This option can be used to determine the number of threads to encode and decode"
+    },
+    {
+      .key = {"coding-cuda"},
+      .type = GF_OPTION_TYPE_BOOL,
+      .default_value = "off",
+      .description = "This option can be used to determine whether to use GPU to encode and decode"
     },
     { .key = {"read-policy" },
       .type = GF_OPTION_TYPE_STR,

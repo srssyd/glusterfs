@@ -20,30 +20,42 @@
 #include "ec-method.h"
 #include "ec.h"
 #include "ec-messages.h"
+#include "ec-method.h"
+
+#include "xlator.h"
+#include "defaults.h"
+
+#include "thpool.h"
+#include "common-utils.h"
+#include "iobuf.h"
+#include "stack.h"
+#include <sys/time.h>
+
+static threadpool thpool = NULL;
+
+int32_t ec_child_valid(ec_t * ec, ec_fop_data_t * fop, int32_t idx) {
+	return (idx < ec->nodes) && (((fop->remaining >> idx) & 1) == 1);
+}
 
 uint32_t
 ec_select_first_by_read_policy (ec_t *ec, ec_fop_data_t *fop)
 {
-        if (ec->read_policy == EC_ROUND_ROBIN) {
-                return ec->idx;
-        } else if (ec->read_policy == EC_GFID_HASH) {
-                if (fop->use_fd) {
-                        return SuperFastHash((char *)fop->fd->inode->gfid,
-                                   sizeof(fop->fd->inode->gfid)) % ec->nodes;
-                } else {
-                        if (gf_uuid_is_null (fop->loc[0].gfid))
-                                loc_gfid (&fop->loc[0], fop->loc[0].gfid);
-                        return SuperFastHash((char *)fop->loc[0].gfid,
-                                   sizeof(fop->loc[0].gfid)) % ec->nodes;
-                }
+    if (ec->read_policy == EC_ROUND_ROBIN) {
+        return ec->idx;
+    } else if (ec->read_policy == EC_GFID_HASH) {
+        if (fop->use_fd) {
+            return SuperFastHash((char *)fop->fd->inode->gfid,
+                    sizeof(fop->fd->inode->gfid)) % ec->nodes;
+        } else {
+            if (gf_uuid_is_null (fop->loc[0].gfid))
+                loc_gfid (&fop->loc[0], fop->loc[0].gfid);
+            return SuperFastHash((char *)fop->loc[0].gfid,
+                    sizeof(fop->loc[0].gfid)) % ec->nodes;
         }
-        return 0;
+    }
+    return 0;
 }
 
-int32_t ec_child_valid(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
-{
-    return (idx < ec->nodes) && (((fop->remaining >> idx) & 1) == 1);
-}
 
 int32_t ec_child_next(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
 {
@@ -321,52 +333,83 @@ ec_is_recoverable_error (int32_t op_errno)
 
 void ec_complete(ec_fop_data_t * fop)
 {
-    ec_cbk_data_t * cbk = NULL;
-    int32_t resume = 0, update = 0;
-    int healing_count = 0;
+	ec_cbk_data_t * cbk = NULL;
+	int32_t resume = 0, update = 0;
+	int healing_count = 0;
 
-    LOCK(&fop->lock);
+	LOCK(&fop->lock);
 
-    ec_trace("COMPLETE", fop, "");
+	ec_trace("COMPLETE", fop, "");
 
-    if (--fop->winds == 0) {
-        if (fop->answer == NULL) {
-            if (!list_empty(&fop->cbk_list)) {
-                cbk = list_entry(fop->cbk_list.next, ec_cbk_data_t, list);
-                healing_count = ec_bits_count (cbk->mask & fop->healing);
-                    /* fop shouldn't be treated as success if it is not
-                     * successful on at least fop->minimum good copies*/
-                if ((cbk->count - healing_count) >= fop->minimum) {
-                    fop->answer = cbk;
+	if (--fop->winds == 0) {
+		if (fop->answer == NULL) {
+			if (!list_empty(&fop->cbk_list)) {
+				if(fop->id == GF_FOP_WRITE ){
+					ec_cbk_data_t *new_cbk = list_entry(fop->cbk_list.next,ec_cbk_data_t,list);
+					int good_count=0;
+					list_for_each_entry(cbk,&fop->cbk_list,list)
+					{
+						good_count++;
+						new_cbk->mask &= cbk->mask;
+						new_cbk->op_ret = max(new_cbk->op_ret,cbk->op_ret);
+						new_cbk->iatt[0].ia_size = min(new_cbk->iatt[0].ia_size,cbk->iatt[0].ia_size);
+						new_cbk->iatt[1].ia_size = max(new_cbk->iatt[1].ia_size,cbk->iatt[1].ia_size);
+						new_cbk->iatt[0].ia_blocks = min(new_cbk->iatt[0].ia_blocks,cbk->iatt[0].ia_blocks);
+						new_cbk->iatt[1].ia_blocks = max(new_cbk->iatt[1].ia_blocks,cbk->iatt[1].ia_blocks);
 
-                    update = 1;
-                }
-            }
+						//printf("ia_size:%d %d.\nblock:%d %d\n",cbk->iatt[0].ia_size,cbk->iatt[1].ia_size,cbk->iatt[0].ia_blocks,cbk->iatt[1].ia_blocks);
+					}
+					if(good_count < GET_REAL_PIPE_COUNT(fop)){
+						printf("An error occurs in one pipeline. Good:%d.\n",good_count);
 
-            resume = 1;
-        }
-    }
+						new_cbk->mask = 0;
+					}else if(good_count > GET_REAL_PIPE_COUNT(fop)){
+						//do nothing.
+						printf("An error occurs in one pipeline. Good:%d.\n",good_count);
 
-    UNLOCK(&fop->lock);
+					}
+					//printf("ok: %d\n",good_count);
+					cbk = new_cbk;
 
-    /* ec_update_good() locks inode->lock. This may cause deadlocks with
-       fop->lock when used in another order. Since ec_update_good() will not
-       be called more than once for each fop, it can be called from outside
-       the fop->lock locked region. */
-    if (update) {
-        ec_update_good(fop, cbk->mask);
-    }
+				}else{
+					cbk = list_entry(fop->cbk_list.next, ec_cbk_data_t, list);
+				}
+				healing_count = ec_bits_count (cbk->mask & fop->healing);
+				/* fop shouldn't be treated as success if it is not
+				 * successful on at least fop->minimum good copies*/
+				if ((cbk->count - healing_count) >= fop->minimum) {
+					fop->answer = cbk;
 
-    if (resume)
-    {
-        ec_resume(fop, 0);
-    }
+					update = 1;
+				}
+			}
 
-    ec_fop_data_release(fop);
+			resume = 1;
+		}
+	}
+
+	UNLOCK(&fop->lock);
+
+	/* ec_update_good() locks inode->lock. This may cause deadlocks with
+	   fop->lock when used in another order. Since ec_update_good() will not
+	   be called more than once for each fop, it can be called from outside
+	   the fop->lock locked region. */
+	if (update) {
+		ec_update_good(fop, cbk->mask);
+	}
+
+	if (resume)
+	{
+		ec_resume(fop, 0);
+	}
+
+	ec_fop_data_release(fop);
+
 }
 
 /* There could be already granted locks sitting on the bricks, unlock for which
  * must be wound at all costs*/
+
 static gf_boolean_t
 ec_must_wind (ec_fop_data_t *fop)
 {
@@ -497,36 +540,279 @@ int32_t ec_dispatch_next(ec_fop_data_t * fop, int32_t idx)
 
 void ec_dispatch_mask(ec_fop_data_t * fop, uintptr_t mask)
 {
-    ec_t * ec = fop->xl->private;
-    int32_t count, idx;
+	ec_t * ec = fop->xl->private;
+	int32_t count, idx;
 
-    count = ec_bits_count(mask);
+	count = ec_bits_count(mask);
 
-    LOCK(&fop->lock);
+	LOCK(&fop->lock);
 
-    ec_trace("EXECUTE", fop, "mask=%lX", mask);
+	ec_trace("EXECUTE", fop, "mask=%lX", mask);
 
-    fop->remaining ^= mask;
+	fop->remaining ^= mask;
 
-    fop->winds += count;
-    fop->refs += count;
+	fop->winds += count;
+	fop->refs += count;
 
-    UNLOCK(&fop->lock);
+	UNLOCK(&fop->lock);
 
-    idx = 0;
-    while (mask != 0)
+	idx = 0;
+	while (mask != 0)
+	{
+		if ((mask & 1) != 0)
+		{
+			fop->wind(ec, fop, idx);
+		}
+		idx++;
+		mask >>= 1;
+	}
+}
+
+struct disptch_param{
+	uintptr_t mask;
+	struct iobref ** iobref_batch;
+	struct iobuf ** iobuf_batch;
+	ec_fop_data_t * fop;
+	ssize_t bufsize;
+	size_t offset;
+	pthread_mutex_t *lock;
+
+};
+
+void *ec_dispatch_batch_mask_single_thread(void * data){
+
+	struct disptch_param* param = (struct disptch_param*)data;
+	uintptr_t mask = param->mask;
+
+	int32_t idx = 0;
+	int32_t i = 0;
+	ec_fop_data_t * fop = param->fop;
+	struct iobref ** iobref_batch = param->iobref_batch;
+	struct iobuf ** iobuf_batch = param->iobuf_batch;
+	ec_t * ec = fop->xl->private;
+	ssize_t bufsize = param->bufsize;
+	int32_t ec_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
+			int32_t op_ret, int32_t op_errno, struct iatt *prestat,
+			struct iatt *poststat, dict_t *xdata);
+	int32_t ec_fsync_cbk(call_frame_t *frame,void *cookie,xlator_t *this,int32_t op_ret,int32_t op_errno,struct iatt * prebuf,struct iatt* postbuf,dict_t * xdata);
+
+	pthread_mutex_lock(param->lock);
+	while (mask != 0)
     {
-        if ((mask & 1) != 0)
+		if ((mask & 1) != 0)
         {
-            fop->wind(ec, fop, idx);
-        }
-        idx++;
-        mask >>= 1;
-    }
+			ec_trace("WIND", fop, "idx=%d", idx);
+
+			struct iovec vector[1];
+
+			vector[0].iov_base = iobuf_batch[i]->ptr;
+			vector[0].iov_len = bufsize;
+
+
+
+			STACK_WIND_COOKIE(fop->frame, ec_writev_cbk, (void *) (uintptr_t) idx,
+					ec->xl_list[idx], ec->xl_list[idx]->fops->writev,
+					fop->fd, vector, 1, (fop->offset+param->offset) / ec->fragments,
+					fop->uint32, iobref_batch[i], fop->xdata);
+
+			STACK_WIND_COOKIE(fop->frame,ec_fsync_cbk,(void *)(uintptr_t) idx,ec->xl_list[idx],ec->xl_list[idx]->fops->fsync,fop->fd,fop->int32,NULL);
+			i++;
+		}
+		idx++;
+		mask >>= 1;
+	}
+	pthread_mutex_unlock(param->lock);
+
+}
+
+void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
+{
+
+	int32_t i,t;
+	ec_t * ec = fop->xl->private;
+	xlator_t *this = ec->xl;
+	int32_t count = ec_bits_count(mask);
+	int32_t idx;
+	ssize_t size = fop->vector[0].iov_len, bufsize = 0;
+	int32_t err = -ENOMEM;
+
+	//const int pipe_count = 8;
+	int pipe_count = GET_REAL_PIPE_COUNT(fop);
+	struct iobref ** iobref_batch = malloc(sizeof(struct iobref*) *count * pipe_count);
+	struct iobuf ** iobuf_batch = malloc(sizeof(struct iobuf*) *count *pipe_count);
+	uint8_t ** out_ptr = malloc(sizeof(uint8_t *) *count *pipe_count);
+    uint8_t * rows = malloc(sizeof(uint8_t) * count);
+
+	gf_boolean_t use_cuda;
+
+	int32_t ec_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
+			int32_t op_ret, int32_t op_errno, struct iatt *prestat,
+			struct iatt *poststat, dict_t *xdata);
+
+	struct timeval time;
+	gettimeofday(&time,NULL);
+	printf("Begin to encode,timestamp %u.%u\n",time.tv_sec,time.tv_usec);
+	int block_size = EC_METHOD_CHUNK_SIZE * ec->fragments;
+	int block_count = (size + block_size -1 )/block_size;
+
+
+	LOCK(&fop->lock);
+
+	ec_trace("EXECUTE", fop, "mask=%lX", mask);
+	printf("A dispathced write with offset:%d\n",fop->offset);
+
+	fop->remaining ^= mask;
+
+	//Modified by syd.
+	fop->winds += 1 * count * pipe_count;
+	fop->refs += 2 * count * pipe_count;
+
+	UNLOCK(&fop->lock);
+
+	pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+	//fop->wind(ec,fop,0);
+
+	ssize_t total = 0;
+
+	struct disptch_param *params=malloc(sizeof(struct disptch_param ) *pipe_count);
+
+	for(t=0;t<pipe_count;t++)
+    {
+		for (i = 0; i < count; i++)
+        {
+			iobref_batch[t*count+i] = iobref_new();
+			if (iobref_batch[t*count+i] == NULL) {
+				goto out;
+			}
+			size = min(fop->vector[0].iov_len-total,(block_count/pipe_count + (t<(block_count%pipe_count))) * block_size);
+
+			bufsize = size / ec->fragments;
+			iobuf_batch[t*count+i] = iobuf_get2(fop->xl->ctx->iobuf_pool, bufsize);
+			if (iobuf_batch[t*count+i] == NULL) {
+				goto out;
+			}
+			err = iobref_add(iobref_batch[t*count+i], iobuf_batch[t*count+i]);
+			if (err != 0) {
+				goto out;
+			}
+			out_ptr[t*count+i] = iobuf_batch[t*count+i]->ptr;
+		}
+
+		gettimeofday(&time,NULL);
+		printf("Begin to encode with pipe %d,timestamp %u.%u,size=%dMB\n",t,time.tv_sec,time.tv_usec,size>>20);
+
+
+		GF_OPTION_INIT("coding-cuda", use_cuda, bool, out);
+		if (use_cuda) {
+			//err = ec_method_batch_encode_cuda(size, ec->fragments, count, fop->vector[0].iov_base + total,
+					//out_ptr+t*count);
+			goto out;
+			if (err < 0)
+				goto out;
+		}
+		else {
+
+            idx = 0;
+            int row_mask = mask;
+            i = 0;
+            while(row_mask != 0)
+            {
+                if((row_mask & 1) != 0)
+                {
+                    rows[i] = idx;
+                    i++;
+                }
+                idx ++;
+                row_mask >>= 1;
+            }
+
+
+			ec_method_batch_encode(size, ec->fragments, count,rows, fop->vector[0].iov_base + total,
+					out_ptr+t*count);
+		}
+		gettimeofday(&time,NULL);
+		printf("Finish encode with pipe %d,timestamp %u.%u\n",t,time.tv_sec,time.tv_usec);
+
+
+		struct disptch_param param;
+		param.bufsize = bufsize;
+		param.iobuf_batch = iobuf_batch+t*count;
+		param.iobref_batch = iobref_batch+t*count;
+		param.fop = fop;
+		param.mask = mask;
+		param.offset = total;
+		param.lock=&lock;
+		params[t]=param;
+
+		//ec_dispatch_batch_mask_single_thread(&params[t]);
+		//gettimeofday(&time,NULL);
+		thpool_add_work(thpool,ec_dispatch_batch_mask_single_thread,(void *)&params[t]);
+		//gettimeofday(&time,NULL);
+
+		total += size;
+
+	}
+	gettimeofday(&time,NULL);
+	printf("Waiting for the finish of thpool,timestamp %u.%u.\n",time.tv_sec,time.tv_usec);
+	thpool_wait(thpool);
+	gettimeofday(&time,NULL);
+	printf("Finish waiting for the finish of thpool,timestamp %u.%u.\n",time.tv_sec,time.tv_usec);
+
+	free(params);
+
+
+
+	for(i=0;i<pipe_count * count;i++)
+    {
+		if (iobuf_batch[i] != NULL)
+        {
+			iobuf_unref(iobuf_batch[i]);
+		}
+	}
+	for(i=0;i<pipe_count * count;i++)
+    {
+		if (iobref_batch[i] != NULL)
+        {
+			iobref_unref(iobref_batch[i]);
+		}
+	}
+
+    free(iobref_batch);
+    free(iobuf_batch);
+    free(out_ptr);
+    free(rows);
+
+	//printf("End of this writev. File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
+	return ;
+out:
+	for(i=0;i<pipe_count * count;i++)
+    {
+		if (iobuf_batch[i] != NULL)
+        {
+			iobuf_unref(iobuf_batch[i]);
+		}
+	}
+	for(i=0;i<pipe_count * count;i++)
+    {
+		if (iobref_batch[i] != NULL)
+        {
+			iobref_unref(iobref_batch[i]);
+		}
+	}
+	//printf("Start at ec_writev_cbk : File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
+	ec_writev_cbk(fop->frame, (void *)(uintptr_t)idx, fop->xl, -1, -err, NULL,
+			NULL, NULL);
+	//printf("End at ec_writev_cbk : File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
+
+    free(iobref_batch);
+    free(iobuf_batch);
+    free(out_ptr);
+    free(rows);
 }
 
 void ec_dispatch_start(ec_fop_data_t * fop)
 {
+
     fop->answer = NULL;
     fop->good = 0;
 
@@ -598,8 +884,24 @@ ec_dispatch_all (ec_fop_data_t *fop)
         }
 }
 
+
+void ec_dispatch_batch(ec_fop_data_t *fop)
+{
+
+    ec_dispatch_start(fop);
+
+    if (ec_child_select(fop)) {
+        fop->expected = ec_bits_count(fop->remaining);
+        fop->first = 0;
+
+        ec_dispatch_batch_mask(fop, fop->remaining);
+    }
+}
+
+
 void ec_dispatch_min(ec_fop_data_t * fop)
 {
+
     ec_t * ec = fop->xl->private;
     uintptr_t mask;
     int32_t idx, count;
@@ -2107,14 +2409,31 @@ void __ec_manager(ec_fop_data_t * fop, int32_t error)
 
 void ec_manager(ec_fop_data_t * fop, int32_t error)
 {
-    GF_ASSERT(fop->jobs == 0);
-    GF_ASSERT(fop->winds == 0);
-    GF_ASSERT(fop->error == 0);
 
-    if (fop->state == EC_STATE_START)
-    {
-        fop->state = EC_STATE_INIT;
-    }
+	GF_ASSERT(fop->jobs == 0);
+	GF_ASSERT(fop->winds == 0);
+	GF_ASSERT(fop->error == 0);
 
-    __ec_manager(fop, error);
+	if (fop->state == EC_STATE_START)
+	{
+		fop->state = EC_STATE_INIT;
+	}
+
+	__ec_manager(fop, error);
+}
+void ec_thpool_init(int num){
+    thpool = thpool_init(num);
+}
+inline int GET_REAL_PIPE_COUNT(ec_fop_data_t *fop)
+{
+	if (fop->vector[0].iov_len < THR_PIPELINE) {
+#if AUTO_PIPE
+		return 1;
+#else
+		return PIPE_COUNT;
+#endif
+	}
+	else {
+		return PIPE_COUNT;
+	}
 }
