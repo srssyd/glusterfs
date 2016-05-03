@@ -187,7 +187,8 @@ size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_rows
 								.total_rows = total_rows,
 								.in = in,
 								.out = out,
-								.off = off
+								.off = off,
+                                .rows = rows
 						};
 						ec_method_batch_single_encode((void*)params);
 		}else{
@@ -198,7 +199,8 @@ size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_rows
 										.total_rows = total_rows,
 										.in = in,
 										.out = out,
-										.off = off
+										.off = off,
+                                        .rows = rows
 						};
 						in += EC_METHOD_CHUNK_SIZE * params[i].size * columns;
 						off += EC_METHOD_CHUNK_SIZE * params[i].size;
