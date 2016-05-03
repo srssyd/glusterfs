@@ -41,26 +41,25 @@ int32_t ec_child_valid(ec_t * ec, ec_fop_data_t * fop, int32_t idx) {
 uint32_t
 ec_select_first_by_read_policy (ec_t *ec, ec_fop_data_t *fop)
 {
-        if (ec->read_policy == EC_ROUND_ROBIN) {
-                return ec->idx;
-        } else if (ec->read_policy == EC_GFID_HASH) {
-                if (fop->use_fd) {
-                        return SuperFastHash((char *)fop->fd->inode->gfid,
-                                   sizeof(fop->fd->inode->gfid)) % ec->nodes;
-                } else {
-                        if (gf_uuid_is_null (fop->loc[0].gfid))
-                                loc_gfid (&fop->loc[0], fop->loc[0].gfid);
-                        return SuperFastHash((char *)fop->loc[0].gfid,
-                                   sizeof(fop->loc[0].gfid)) % ec->nodes;
-                }
+    if (ec->read_policy == EC_ROUND_ROBIN) {
+        return ec->idx;
+    } else if (ec->read_policy == EC_GFID_HASH) {
+        if (fop->use_fd) {
+            return SuperFastHash((char *)fop->fd->inode->gfid,
+                    sizeof(fop->fd->inode->gfid)) % ec->nodes;
+        } else {
+            if (gf_uuid_is_null (fop->loc[0].gfid))
+                loc_gfid (&fop->loc[0], fop->loc[0].gfid);
+            return SuperFastHash((char *)fop->loc[0].gfid,
+                    sizeof(fop->loc[0].gfid)) % ec->nodes;
         }
-        return 0;
+    }
+    return 0;
 }
 
 
 int32_t ec_child_next(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
 {
-
     while (!ec_child_valid(ec, fop, idx))
     {
         if (++idx >= ec->nodes)
@@ -374,7 +373,7 @@ void ec_complete(ec_fop_data_t * fop)
 					}
 					if(good_count < GET_REAL_PIPE_COUNT(fop)){
 						printf("An error occurs in one pipeline. Good:%d.\n",good_count);
-						
+
 						new_cbk->mask = 0;
 					}else if(good_count > GET_REAL_PIPE_COUNT(fop)){
 						//do nothing.

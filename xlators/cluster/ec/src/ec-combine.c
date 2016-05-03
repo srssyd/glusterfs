@@ -6,7 +6,7 @@
    General Public License, version 3 or any later version (LGPLv3 or
    later), or the GNU General Public License, version 2 (GPLv2), in all
    cases as published by the Free Software Foundation.
- */
+   */
 
 #include <fnmatch.h>
 
@@ -36,468 +36,468 @@ struct _ec_dict_info
 
 struct _ec_dict_combine
 {
-		ec_cbk_data_t * cbk;
-		int32_t         which;
+    ec_cbk_data_t * cbk;
+    int32_t         which;
 };
 
-		int32_t
+    int32_t
 ec_combine_write (ec_fop_data_t *fop, ec_cbk_data_t *dst,
-				ec_cbk_data_t *src)
+        ec_cbk_data_t *src)
 {
-		int     valid = 0;
+    int     valid = 0;
 
-		if (!fop || !dst || !src)
-				return 0;
+    if (!fop || !dst || !src)
+        return 0;
 
-		switch (fop->id) {
-				case GF_FOP_REMOVEXATTR:
-				case GF_FOP_FREMOVEXATTR:
-				case GF_FOP_SETXATTR:
-				case GF_FOP_FSETXATTR:
-						return 1;
+    switch (fop->id) {
+        case GF_FOP_REMOVEXATTR:
+        case GF_FOP_FREMOVEXATTR:
+        case GF_FOP_SETXATTR:
+        case GF_FOP_FSETXATTR:
+            return 1;
 
-				case GF_FOP_SYMLINK:
-				case GF_FOP_LINK:
-				case GF_FOP_CREATE:
-				case GF_FOP_MKNOD:
-				case GF_FOP_MKDIR:
-						valid = 3;
-						break;
-				case GF_FOP_UNLINK:
-				case GF_FOP_RMDIR:
-				case GF_FOP_SETATTR:
-				case GF_FOP_FSETATTR:
-				case GF_FOP_TRUNCATE:
-				case GF_FOP_FTRUNCATE:
-				case GF_FOP_WRITE:
-				case GF_FOP_FALLOCATE:
-				case GF_FOP_DISCARD:
-				case GF_FOP_ZEROFILL:
-						valid = 2;
-						break;
-				case GF_FOP_RENAME:
-						valid = 5;
-						break;
-				default:
-						gf_msg_callingfn (fop->xl->name, GF_LOG_WARNING, EINVAL,
-										EC_MSG_INVALID_FOP,
-										"Invalid fop %d", fop->id);
-						return 0;
-						break;
-		}
+        case GF_FOP_SYMLINK:
+        case GF_FOP_LINK:
+        case GF_FOP_CREATE:
+        case GF_FOP_MKNOD:
+        case GF_FOP_MKDIR:
+            valid = 3;
+            break;
+        case GF_FOP_UNLINK:
+        case GF_FOP_RMDIR:
+        case GF_FOP_SETATTR:
+        case GF_FOP_FSETATTR:
+        case GF_FOP_TRUNCATE:
+        case GF_FOP_FTRUNCATE:
+        case GF_FOP_WRITE:
+        case GF_FOP_FALLOCATE:
+        case GF_FOP_DISCARD:
+        case GF_FOP_ZEROFILL:
+            valid = 2;
+            break;
+        case GF_FOP_RENAME:
+            valid = 5;
+            break;
+        default:
+            gf_msg_callingfn (fop->xl->name, GF_LOG_WARNING, EINVAL,
+                    EC_MSG_INVALID_FOP,
+                    "Invalid fop %d", fop->id);
+            return 0;
+            break;
+    }
 
-		if (fop->id == GF_FOP_WRITE){
-				if (!ec_iatt_combine_pipeline(fop, dst->iatt, src->iatt, valid)) {
-						gf_msg (fop->xl->name, GF_LOG_NOTICE, 0,
-										EC_MSG_IATT_MISMATCH,
-										"Mismatching iatt in "
-										"answers of '%s'", gf_fop_list[fop->id]);
-						printf("Mismatching iatt pre:%d:%d after:%d:%d\n",src->iatt[0].ia_size,dst->iatt[0].ia_size,src->iatt[1].ia_size,dst->iatt[1].ia_size);
-						return 0;
-				}
-		}else{
+    if (fop->id == GF_FOP_WRITE){
+        if (!ec_iatt_combine_pipeline(fop, dst->iatt, src->iatt, valid)) {
+            gf_msg (fop->xl->name, GF_LOG_NOTICE, 0,
+                    EC_MSG_IATT_MISMATCH,
+                    "Mismatching iatt in "
+                    "answers of '%s'", gf_fop_list[fop->id]);
+            printf("Mismatching iatt pre:%d:%d after:%d:%d\n",src->iatt[0].ia_size,dst->iatt[0].ia_size,src->iatt[1].ia_size,dst->iatt[1].ia_size);
+            return 0;
+        }
+    }else{
 
-				if (!ec_iatt_combine(fop, dst->iatt, src->iatt, valid)) {
-						gf_msg (fop->xl->name, GF_LOG_NOTICE, 0,
-										EC_MSG_IATT_MISMATCH,
-										"Mismatching iatt in "
-										"answers of '%s'", gf_fop_list[fop->id]);
-						printf("Mismatching iatt pre:%d:%d after:%d:%d\n",src->iatt[0].ia_size,dst->iatt[0].ia_size,src->iatt[1].ia_size,dst->iatt[1].ia_size);
-						return 0;
-				}
-		}
-		return 1;
+        if (!ec_iatt_combine(fop, dst->iatt, src->iatt, valid)) {
+            gf_msg (fop->xl->name, GF_LOG_NOTICE, 0,
+                    EC_MSG_IATT_MISMATCH,
+                    "Mismatching iatt in "
+                    "answers of '%s'", gf_fop_list[fop->id]);
+            printf("Mismatching iatt pre:%d:%d after:%d:%d\n",src->iatt[0].ia_size,dst->iatt[0].ia_size,src->iatt[1].ia_size,dst->iatt[1].ia_size);
+            return 0;
+        }
+    }
+    return 1;
 }
 
 void ec_iatt_time_merge(uint32_t * dst_sec, uint32_t * dst_nsec,
-				uint32_t src_sec, uint32_t src_nsec)
+        uint32_t src_sec, uint32_t src_nsec)
 {
-		if ((*dst_sec < src_sec) ||
-						((*dst_sec == src_sec) && (*dst_nsec < src_nsec)))
-		{
-				*dst_sec = src_sec;
-				*dst_nsec = src_nsec;
-		}
+    if ((*dst_sec < src_sec) ||
+            ((*dst_sec == src_sec) && (*dst_nsec < src_nsec)))
+    {
+        *dst_sec = src_sec;
+        *dst_nsec = src_nsec;
+    }
 }
 
 static
-		uint64_t
+    uint64_t
 gfid_to_ino(uuid_t gfid)
 {
-		uint64_t ino = 0;
-		int32_t i;
+    uint64_t ino = 0;
+    int32_t i;
 
-		for (i = 8; i < 16; i++) {
-				ino <<= 8;
-				ino += (uint8_t)gfid[i];
-		}
+    for (i = 8; i < 16; i++) {
+        ino <<= 8;
+        ino += (uint8_t)gfid[i];
+    }
 
-		return ino;
+    return ino;
 }
 
 static
-		gf_boolean_t
+    gf_boolean_t
 ec_iatt_is_trusted(ec_fop_data_t *fop, struct iatt *iatt)
 {
-		uint64_t ino;
-		int32_t i;
+    uint64_t ino;
+    int32_t i;
 
-		/* Only the top level fop will have fop->locks filled. */
-		while (fop->parent != NULL) {
-				fop = fop->parent;
-		}
+    /* Only the top level fop will have fop->locks filled. */
+    while (fop->parent != NULL) {
+        fop = fop->parent;
+    }
 
-		/* Lookups are special requests always done without locks taken but they
-		 * require to be able to identify differences between bricks. Special
-		 * handling of these differences is already done in lookup specific code
-		 * so we shouldn't ignore any difference here and consider all iatt
-		 * structures as trusted. */
-		if (fop->id == GF_FOP_LOOKUP) {
-				return _gf_true;
-		}
+    /* Lookups are special requests always done without locks taken but they
+     * require to be able to identify differences between bricks. Special
+     * handling of these differences is already done in lookup specific code
+     * so we shouldn't ignore any difference here and consider all iatt
+     * structures as trusted. */
+    if (fop->id == GF_FOP_LOOKUP) {
+        return _gf_true;
+    }
 
-		/* Check if the iatt references an inode locked by the current fop */
-		for (i = 0; i < fop->lock_count; i++) {
-				ino = gfid_to_ino(fop->locks[i].lock->loc.inode->gfid);
-				if (iatt->ia_ino == ino) {
-						return _gf_true;
-				}
-		}
+    /* Check if the iatt references an inode locked by the current fop */
+    for (i = 0; i < fop->lock_count; i++) {
+        ino = gfid_to_ino(fop->locks[i].lock->loc.inode->gfid);
+        if (iatt->ia_ino == ino) {
+            return _gf_true;
+        }
+    }
 
-		return _gf_false;
+    return _gf_false;
 }
 int32_t ec_iatt_combine_pipeline(ec_fop_data_t *fop, struct iatt *dst, struct iatt *src,
-				int32_t count)
+        int32_t count)
 {
-		int32_t i;
-		gf_boolean_t failed = _gf_false;
+    int32_t i;
+    gf_boolean_t failed = _gf_false;
 
-		for (i = 0; i < count; i++)
-		{
-				/* Check for basic fields. These fields must be equal always, even if
-				 * the inode is not locked because in these cases the parent inode
-				 * will be locked and differences in these fields require changes in
-				 * the parent directory. */
-				if ((dst[i].ia_ino != src[i].ia_ino) ||
-								(((dst[i].ia_type == IA_IFBLK) || (dst[i].ia_type == IA_IFCHR)) &&
-								 (dst[i].ia_rdev != src[i].ia_rdev)) ||
-								(gf_uuid_compare(dst[i].ia_gfid, src[i].ia_gfid) != 0)) {
-						failed = _gf_true;
-				}
-				/* Check for not so stable fields. These fields can change if the
-				 * inode is not locked. */
-				if (!failed && ((dst[i].ia_uid != src[i].ia_uid) ||
-										(dst[i].ia_gid != src[i].ia_gid) ||
-										(st_mode_from_ia(dst[i].ia_prot, dst[i].ia_type) !=
-										 st_mode_from_ia(src[i].ia_prot, src[i].ia_type)))) {
-						if (ec_iatt_is_trusted(fop, dst)) {
-								/* If the iatt contains information from an inode that is
-								 * locked, these differences are real problems, so we need to
-								 * report them. Otherwise we ignore them and don't care which
-								 * data is returned. */
-								failed = _gf_true;
-						} else {
-								gf_msg_debug (fop->xl->name, 0,
-												"Ignoring iatt differences because inode is not "
-												"locked");
-						}
-				}
-				if (failed) {
-						gf_msg (fop->xl->name, GF_LOG_WARNING, 0,
-										EC_MSG_IATT_COMBINE_FAIL,
-										"Failed to combine iatt (inode: %lu-%lu, links: %u-%u, "
-										"uid: %u-%u, gid: %u-%u, rdev: %lu-%lu, size: %lu-%lu, "
-										"mode: %o-%o)",
-										dst[i].ia_ino, src[i].ia_ino, dst[i].ia_nlink,
-										src[i].ia_nlink, dst[i].ia_uid, src[i].ia_uid,
-										dst[i].ia_gid, src[i].ia_gid, dst[i].ia_rdev,
-										src[i].ia_rdev, dst[i].ia_size, src[i].ia_size,
-										st_mode_from_ia(dst[i].ia_prot, dst[i].ia_type),
-										st_mode_from_ia(src[i].ia_prot, dst[i].ia_type));
+    for (i = 0; i < count; i++)
+    {
+        /* Check for basic fields. These fields must be equal always, even if
+         * the inode is not locked because in these cases the parent inode
+         * will be locked and differences in these fields require changes in
+         * the parent directory. */
+        if ((dst[i].ia_ino != src[i].ia_ino) ||
+                (((dst[i].ia_type == IA_IFBLK) || (dst[i].ia_type == IA_IFCHR)) &&
+                 (dst[i].ia_rdev != src[i].ia_rdev)) ||
+                (gf_uuid_compare(dst[i].ia_gfid, src[i].ia_gfid) != 0)) {
+            failed = _gf_true;
+        }
+        /* Check for not so stable fields. These fields can change if the
+         * inode is not locked. */
+        if (!failed && ((dst[i].ia_uid != src[i].ia_uid) ||
+                    (dst[i].ia_gid != src[i].ia_gid) ||
+                    (st_mode_from_ia(dst[i].ia_prot, dst[i].ia_type) !=
+                     st_mode_from_ia(src[i].ia_prot, src[i].ia_type)))) {
+            if (ec_iatt_is_trusted(fop, dst)) {
+                /* If the iatt contains information from an inode that is
+                 * locked, these differences are real problems, so we need to
+                 * report them. Otherwise we ignore them and don't care which
+                 * data is returned. */
+                failed = _gf_true;
+            } else {
+                gf_msg_debug (fop->xl->name, 0,
+                        "Ignoring iatt differences because inode is not "
+                        "locked");
+            }
+        }
+        if (failed) {
+            gf_msg (fop->xl->name, GF_LOG_WARNING, 0,
+                    EC_MSG_IATT_COMBINE_FAIL,
+                    "Failed to combine iatt (inode: %lu-%lu, links: %u-%u, "
+                    "uid: %u-%u, gid: %u-%u, rdev: %lu-%lu, size: %lu-%lu, "
+                    "mode: %o-%o)",
+                    dst[i].ia_ino, src[i].ia_ino, dst[i].ia_nlink,
+                    src[i].ia_nlink, dst[i].ia_uid, src[i].ia_uid,
+                    dst[i].ia_gid, src[i].ia_gid, dst[i].ia_rdev,
+                    src[i].ia_rdev, dst[i].ia_size, src[i].ia_size,
+                    st_mode_from_ia(dst[i].ia_prot, dst[i].ia_type),
+                    st_mode_from_ia(src[i].ia_prot, dst[i].ia_type));
 
-						return 0;
-				}
-		}
+            return 0;
+        }
+    }
 
-		while (count-- > 0)
-		{
-				dst[count].ia_blocks += src[count].ia_blocks;
-				if (dst[count].ia_blksize < src[count].ia_blksize)
-				{
-						dst[count].ia_blksize = src[count].ia_blksize;
-				}
+    while (count-- > 0)
+    {
+        dst[count].ia_blocks += src[count].ia_blocks;
+        if (dst[count].ia_blksize < src[count].ia_blksize)
+        {
+            dst[count].ia_blksize = src[count].ia_blksize;
+        }
 
-				ec_iatt_time_merge(&dst[count].ia_atime, &dst[count].ia_atime_nsec,
-								src[count].ia_atime, src[count].ia_atime_nsec);
-				ec_iatt_time_merge(&dst[count].ia_mtime, &dst[count].ia_mtime_nsec,
-								src[count].ia_mtime, src[count].ia_mtime_nsec);
-				ec_iatt_time_merge(&dst[count].ia_ctime, &dst[count].ia_ctime_nsec,
-								src[count].ia_ctime, src[count].ia_ctime_nsec);
-		}
+        ec_iatt_time_merge(&dst[count].ia_atime, &dst[count].ia_atime_nsec,
+                src[count].ia_atime, src[count].ia_atime_nsec);
+        ec_iatt_time_merge(&dst[count].ia_mtime, &dst[count].ia_mtime_nsec,
+                src[count].ia_mtime, src[count].ia_mtime_nsec);
+        ec_iatt_time_merge(&dst[count].ia_ctime, &dst[count].ia_ctime_nsec,
+                src[count].ia_ctime, src[count].ia_ctime_nsec);
+    }
 
-		return 1;
+    return 1;
 }
 int32_t ec_iatt_combine(ec_fop_data_t *fop, struct iatt *dst, struct iatt *src,
-				int32_t count)
+        int32_t count)
 {
-		int32_t i;
-		gf_boolean_t failed = _gf_false;
+    int32_t i;
+    gf_boolean_t failed = _gf_false;
 
-		for (i = 0; i < count; i++)
-		{
-				/* Check for basic fields. These fields must be equal always, even if
-				 * the inode is not locked because in these cases the parent inode
-				 * will be locked and differences in these fields require changes in
-				 * the parent directory. */
-				if ((dst[i].ia_ino != src[i].ia_ino) ||
-								(((dst[i].ia_type == IA_IFBLK) || (dst[i].ia_type == IA_IFCHR)) &&
-								 (dst[i].ia_rdev != src[i].ia_rdev)) ||
-								(gf_uuid_compare(dst[i].ia_gfid, src[i].ia_gfid) != 0)) {
-						failed = _gf_true;
-				}
-				/* Check for not so stable fields. These fields can change if the
-				 * inode is not locked. */
-				if (!failed && ((dst[i].ia_uid != src[i].ia_uid) ||
-										(dst[i].ia_gid != src[i].ia_gid) ||
-										((dst[i].ia_type == IA_IFREG) &&
-										 (dst[i].ia_size != src[i].ia_size)) ||
-										(st_mode_from_ia(dst[i].ia_prot, dst[i].ia_type) !=
-										 st_mode_from_ia(src[i].ia_prot, src[i].ia_type)))) {
-						if (ec_iatt_is_trusted(fop, dst)) {
-								/* If the iatt contains information from an inode that is
-								 * locked, these differences are real problems, so we need to
-								 * report them. Otherwise we ignore them and don't care which
-								 * data is returned. */
-								failed = _gf_true;
-						} else {
-								gf_msg_debug (fop->xl->name, 0,
-												"Ignoring iatt differences because inode is not "
-												"locked");
-						}
-				}
-				if (failed) {
-						gf_msg (fop->xl->name, GF_LOG_WARNING, 0,
-										EC_MSG_IATT_COMBINE_FAIL,
-										"Failed to combine iatt (inode: %lu-%lu, links: %u-%u, "
-										"uid: %u-%u, gid: %u-%u, rdev: %lu-%lu, size: %lu-%lu, "
-										"mode: %o-%o)",
-										dst[i].ia_ino, src[i].ia_ino, dst[i].ia_nlink,
-										src[i].ia_nlink, dst[i].ia_uid, src[i].ia_uid,
-										dst[i].ia_gid, src[i].ia_gid, dst[i].ia_rdev,
-										src[i].ia_rdev, dst[i].ia_size, src[i].ia_size,
-										st_mode_from_ia(dst[i].ia_prot, dst[i].ia_type),
-										st_mode_from_ia(src[i].ia_prot, dst[i].ia_type));
+    for (i = 0; i < count; i++)
+    {
+        /* Check for basic fields. These fields must be equal always, even if
+         * the inode is not locked because in these cases the parent inode
+         * will be locked and differences in these fields require changes in
+         * the parent directory. */
+        if ((dst[i].ia_ino != src[i].ia_ino) ||
+                (((dst[i].ia_type == IA_IFBLK) || (dst[i].ia_type == IA_IFCHR)) &&
+                 (dst[i].ia_rdev != src[i].ia_rdev)) ||
+                (gf_uuid_compare(dst[i].ia_gfid, src[i].ia_gfid) != 0)) {
+            failed = _gf_true;
+        }
+        /* Check for not so stable fields. These fields can change if the
+         * inode is not locked. */
+        if (!failed && ((dst[i].ia_uid != src[i].ia_uid) ||
+                    (dst[i].ia_gid != src[i].ia_gid) ||
+                    ((dst[i].ia_type == IA_IFREG) &&
+                     (dst[i].ia_size != src[i].ia_size)) ||
+                    (st_mode_from_ia(dst[i].ia_prot, dst[i].ia_type) !=
+                     st_mode_from_ia(src[i].ia_prot, src[i].ia_type)))) {
+            if (ec_iatt_is_trusted(fop, dst)) {
+                /* If the iatt contains information from an inode that is
+                 * locked, these differences are real problems, so we need to
+                 * report them. Otherwise we ignore them and don't care which
+                 * data is returned. */
+                failed = _gf_true;
+            } else {
+                gf_msg_debug (fop->xl->name, 0,
+                        "Ignoring iatt differences because inode is not "
+                        "locked");
+            }
+        }
+        if (failed) {
+            gf_msg (fop->xl->name, GF_LOG_WARNING, 0,
+                    EC_MSG_IATT_COMBINE_FAIL,
+                    "Failed to combine iatt (inode: %lu-%lu, links: %u-%u, "
+                    "uid: %u-%u, gid: %u-%u, rdev: %lu-%lu, size: %lu-%lu, "
+                    "mode: %o-%o)",
+                    dst[i].ia_ino, src[i].ia_ino, dst[i].ia_nlink,
+                    src[i].ia_nlink, dst[i].ia_uid, src[i].ia_uid,
+                    dst[i].ia_gid, src[i].ia_gid, dst[i].ia_rdev,
+                    src[i].ia_rdev, dst[i].ia_size, src[i].ia_size,
+                    st_mode_from_ia(dst[i].ia_prot, dst[i].ia_type),
+                    st_mode_from_ia(src[i].ia_prot, dst[i].ia_type));
 
-						return 0;
-				}
-		}
+            return 0;
+        }
+    }
 
-		while (count-- > 0)
-		{
-				dst[count].ia_blocks += src[count].ia_blocks;
-				if (dst[count].ia_blksize < src[count].ia_blksize)
-				{
-						dst[count].ia_blksize = src[count].ia_blksize;
-				}
+    while (count-- > 0)
+    {
+        dst[count].ia_blocks += src[count].ia_blocks;
+        if (dst[count].ia_blksize < src[count].ia_blksize)
+        {
+            dst[count].ia_blksize = src[count].ia_blksize;
+        }
 
-				ec_iatt_time_merge(&dst[count].ia_atime, &dst[count].ia_atime_nsec,
-								src[count].ia_atime, src[count].ia_atime_nsec);
-				ec_iatt_time_merge(&dst[count].ia_mtime, &dst[count].ia_mtime_nsec,
-								src[count].ia_mtime, src[count].ia_mtime_nsec);
-				ec_iatt_time_merge(&dst[count].ia_ctime, &dst[count].ia_ctime_nsec,
-								src[count].ia_ctime, src[count].ia_ctime_nsec);
-		}
+        ec_iatt_time_merge(&dst[count].ia_atime, &dst[count].ia_atime_nsec,
+                src[count].ia_atime, src[count].ia_atime_nsec);
+        ec_iatt_time_merge(&dst[count].ia_mtime, &dst[count].ia_mtime_nsec,
+                src[count].ia_mtime, src[count].ia_mtime_nsec);
+        ec_iatt_time_merge(&dst[count].ia_ctime, &dst[count].ia_ctime_nsec,
+                src[count].ia_ctime, src[count].ia_ctime_nsec);
+    }
 
-		return 1;
+    return 1;
 }
 
 void ec_iatt_rebuild(ec_t * ec, struct iatt * iatt, int32_t count,
-				int32_t answers)
+        int32_t answers)
 {
-		uint64_t blocks;
+    uint64_t blocks;
 
-		while (count-- > 0)
-		{
-				blocks = iatt[count].ia_blocks * ec->fragments + answers - 1;
-				blocks /= answers;
-				iatt[count].ia_blocks = blocks;
-		}
+    while (count-- > 0)
+    {
+        blocks = iatt[count].ia_blocks * ec->fragments + answers - 1;
+        blocks /= answers;
+        iatt[count].ia_blocks = blocks;
+    }
 }
 
-		gf_boolean_t
+    gf_boolean_t
 ec_xattr_match (dict_t *dict, char *key, data_t *value, void *arg)
 {
-		if ((fnmatch(GF_XATTR_STIME_PATTERN, key, 0) == 0) ||
-						(strcmp(key, GLUSTERFS_OPEN_FD_COUNT) == 0)) {
-				return _gf_false;
-		}
+    if ((fnmatch(GF_XATTR_STIME_PATTERN, key, 0) == 0) ||
+            (strcmp(key, GLUSTERFS_OPEN_FD_COUNT) == 0)) {
+        return _gf_false;
+    }
 
-		return _gf_true;
+    return _gf_true;
 }
 
-		gf_boolean_t
+    gf_boolean_t
 ec_value_ignore (char *key)
 {
-		if ((strcmp(key, GF_CONTENT_KEY) == 0) ||
-						(strcmp(key, GF_XATTR_PATHINFO_KEY) == 0) ||
-						(strcmp(key, GF_XATTR_USER_PATHINFO_KEY) == 0) ||
-						(strcmp(key, GF_XATTR_LOCKINFO_KEY) == 0) ||
-						(strcmp(key, GLUSTERFS_OPEN_FD_COUNT) == 0) ||
-						(strcmp(key, GLUSTERFS_INODELK_COUNT) == 0) ||
-						(strcmp(key, GLUSTERFS_ENTRYLK_COUNT) == 0) ||
-						(strncmp(key, GF_XATTR_CLRLK_CMD,
-								 strlen (GF_XATTR_CLRLK_CMD)) == 0) ||
-						(strcmp(key, DHT_IATT_IN_XDATA_KEY) == 0) ||
-						(strncmp(key, EC_QUOTA_PREFIX, strlen(EC_QUOTA_PREFIX)) == 0) ||
-						(fnmatch(MARKER_XATTR_PREFIX ".*." XTIME, key, 0) == 0) ||
-						(fnmatch(GF_XATTR_MARKER_KEY ".*", key, 0) == 0) ||
-						(XATTR_IS_NODE_UUID(key))) {
-				return _gf_true;
-		}
-		return _gf_false;
+    if ((strcmp(key, GF_CONTENT_KEY) == 0) ||
+            (strcmp(key, GF_XATTR_PATHINFO_KEY) == 0) ||
+            (strcmp(key, GF_XATTR_USER_PATHINFO_KEY) == 0) ||
+            (strcmp(key, GF_XATTR_LOCKINFO_KEY) == 0) ||
+            (strcmp(key, GLUSTERFS_OPEN_FD_COUNT) == 0) ||
+            (strcmp(key, GLUSTERFS_INODELK_COUNT) == 0) ||
+            (strcmp(key, GLUSTERFS_ENTRYLK_COUNT) == 0) ||
+            (strncmp(key, GF_XATTR_CLRLK_CMD,
+                     strlen (GF_XATTR_CLRLK_CMD)) == 0) ||
+            (strcmp(key, DHT_IATT_IN_XDATA_KEY) == 0) ||
+            (strncmp(key, EC_QUOTA_PREFIX, strlen(EC_QUOTA_PREFIX)) == 0) ||
+            (fnmatch(MARKER_XATTR_PREFIX ".*." XTIME, key, 0) == 0) ||
+            (fnmatch(GF_XATTR_MARKER_KEY ".*", key, 0) == 0) ||
+            (XATTR_IS_NODE_UUID(key))) {
+        return _gf_true;
+    }
+    return _gf_false;
 }
 
-		int32_t
+    int32_t
 ec_dict_compare (dict_t *dict1, dict_t *dict2)
 {
-		if (are_dicts_equal (dict1, dict2, ec_xattr_match, ec_value_ignore))
-				return 1;
-		return 0;
+    if (are_dicts_equal (dict1, dict2, ec_xattr_match, ec_value_ignore))
+        return 1;
+    return 0;
 }
 
 int32_t ec_dict_list(data_t ** list, int32_t * count, ec_cbk_data_t * cbk,
-				int32_t which, char * key)
+        int32_t which, char * key)
 {
-		ec_cbk_data_t * ans;
-		dict_t * dict;
-		int32_t i, max;
+    ec_cbk_data_t * ans;
+    dict_t * dict;
+    int32_t i, max;
 
-		max = *count;
-		i = 0;
-		for (ans = cbk; ans != NULL; ans = ans->next) {
-				if (i >= max) {
-						gf_msg (cbk->fop->xl->name, GF_LOG_ERROR, EINVAL,
-										EC_MSG_INVALID_DICT_NUMS,
-										"Unexpected number of "
-										"dictionaries");
+    max = *count;
+    i = 0;
+    for (ans = cbk; ans != NULL; ans = ans->next) {
+        if (i >= max) {
+            gf_msg (cbk->fop->xl->name, GF_LOG_ERROR, EINVAL,
+                    EC_MSG_INVALID_DICT_NUMS,
+                    "Unexpected number of "
+                    "dictionaries");
 
-						return -EINVAL;
-				}
+            return -EINVAL;
+        }
 
-				dict = (which == EC_COMBINE_XDATA) ? ans->xdata : ans->dict;
-				list[i] = dict_get(dict, key);
-				if (list[i] != NULL) {
-						i++;
-				}
-		}
+        dict = (which == EC_COMBINE_XDATA) ? ans->xdata : ans->dict;
+        list[i] = dict_get(dict, key);
+        if (list[i] != NULL) {
+            i++;
+        }
+    }
 
-		*count = i;
+    *count = i;
 
-		return 0;
+    return 0;
 }
 
 int32_t ec_concat_prepare(xlator_t *xl, char **str, char **sep, char **post,
-				const char *fmt, va_list args)
+        const char *fmt, va_list args)
 {
-		char *tmp;
-		int32_t len;
+    char *tmp;
+    int32_t len;
 
-		len = gf_vasprintf(str, fmt, args);
-		if (len < 0) {
-				return -ENOMEM;
-		}
+    len = gf_vasprintf(str, fmt, args);
+    if (len < 0) {
+        return -ENOMEM;
+    }
 
-		tmp = strchr(*str, '{');
-		if (tmp == NULL) {
-				goto out;
-		}
-		*tmp++ = 0;
-		*sep = tmp;
-		tmp = strchr(tmp, '}');
-		if (tmp == NULL) {
-				goto out;
-		}
-		*tmp++ = 0;
-		*post = tmp;
+    tmp = strchr(*str, '{');
+    if (tmp == NULL) {
+        goto out;
+    }
+    *tmp++ = 0;
+    *sep = tmp;
+    tmp = strchr(tmp, '}');
+    if (tmp == NULL) {
+        goto out;
+    }
+    *tmp++ = 0;
+    *post = tmp;
 
-		return 0;
+    return 0;
 
 out:
-		gf_msg (xl->name, GF_LOG_ERROR, EINVAL,
-						EC_MSG_INVALID_FORMAT,
-						"Invalid concat format");
+    gf_msg (xl->name, GF_LOG_ERROR, EINVAL,
+            EC_MSG_INVALID_FORMAT,
+            "Invalid concat format");
 
-		GF_FREE(*str);
+    GF_FREE(*str);
 
-		return -EINVAL;
+    return -EINVAL;
 }
 
 int32_t ec_dict_data_concat(const char * fmt, ec_cbk_data_t * cbk,
-				int32_t which, char * key, ...)
+        int32_t which, char * key, ...)
 {
-		data_t * data[cbk->count];
-		char * str = NULL, * pre = NULL, * sep, * post;
-		dict_t * dict;
-		va_list args;
-		int32_t i, num, len, prelen, postlen, seplen, tmp;
-		int32_t err;
+    data_t * data[cbk->count];
+    char * str = NULL, * pre = NULL, * sep, * post;
+    dict_t * dict;
+    va_list args;
+    int32_t i, num, len, prelen, postlen, seplen, tmp;
+    int32_t err;
 
-		num = cbk->count;
-		err = ec_dict_list(data, &num, cbk, which, key);
-		if (err != 0) {
-				return err;
-		}
+    num = cbk->count;
+    err = ec_dict_list(data, &num, cbk, which, key);
+    if (err != 0) {
+        return err;
+    }
 
-		va_start(args, key);
-		err = ec_concat_prepare(cbk->fop->xl, &pre, &sep, &post, fmt, args);
-		va_end(args);
+    va_start(args, key);
+    err = ec_concat_prepare(cbk->fop->xl, &pre, &sep, &post, fmt, args);
+    va_end(args);
 
-		if (err != 0) {
-				return err;
-		}
+    if (err != 0) {
+        return err;
+    }
 
-		prelen = strlen(pre);
-		seplen = strlen(sep);
-		postlen = strlen(post);
+    prelen = strlen(pre);
+    seplen = strlen(sep);
+    postlen = strlen(post);
 
-		len = prelen + (num - 1) * seplen + postlen + 1;
-		for (i = 0; i < num; i++) {
-				len += data[i]->len - 1;
-		}
+    len = prelen + (num - 1) * seplen + postlen + 1;
+    for (i = 0; i < num; i++) {
+        len += data[i]->len - 1;
+    }
 
-		err = -ENOMEM;
+    err = -ENOMEM;
 
-		str = GF_MALLOC(len, gf_common_mt_char);
-		if (str == NULL) {
-				goto out;
-		}
+    str = GF_MALLOC(len, gf_common_mt_char);
+    if (str == NULL) {
+        goto out;
+    }
 
-		memcpy(str, pre, prelen);
-		len = prelen;
-		for (i = 0; i < num; i++) {
-				if (i > 0) {
-						memcpy(str + len, sep, seplen);
-						len += seplen;
-				}
-				tmp = data[i]->len - 1;
-				memcpy(str + len, data[i]->data, tmp);
-				len += tmp;
-		}
-		memcpy(str + len, post, postlen + 1);
+    memcpy(str, pre, prelen);
+    len = prelen;
+    for (i = 0; i < num; i++) {
+        if (i > 0) {
+            memcpy(str + len, sep, seplen);
+            len += seplen;
+        }
+        tmp = data[i]->len - 1;
+        memcpy(str + len, data[i]->data, tmp);
+        len += tmp;
+    }
+    memcpy(str + len, post, postlen + 1);
 
-		dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
-		err = dict_set_dynstr(dict, key, str);
-		if (err != 0) {
-				goto out;
-		}
+    dict = (which == EC_COMBINE_XDATA) ? cbk->xdata : cbk->dict;
+    err = dict_set_dynstr(dict, key, str);
+    if (err != 0) {
+        goto out;
+    }
 
-		str = NULL;
+    str = NULL;
 
 out:
-		GF_FREE(str);
-		GF_FREE(pre);
+    GF_FREE(str);
+    GF_FREE(pre);
 
-		return err;
+    return err;
 };
 
 
@@ -698,15 +698,15 @@ int32_t ec_dict_data_quota(ec_cbk_data_t *cbk, int32_t which, char *key)
      */
     for (i = 0; i < num; i++) {
         if (quota_data_to_meta (data[i], QUOTA_SIZE_KEY, &size) < 0) {
-                continue;
+            continue;
         }
 
         if (size.size > max_size.size)
-                max_size.size = size.size;
+            max_size.size = size.size;
         if (size.file_count > max_size.file_count)
-                max_size.file_count = size.file_count;
+            max_size.file_count = size.file_count;
         if (size.dir_count > max_size.dir_count)
-                max_size.dir_count = size.dir_count;
+            max_size.dir_count = size.dir_count;
     }
 
     ec = cbk->fop->xl->private;
@@ -744,15 +744,15 @@ int32_t ec_dict_data_stime(ec_cbk_data_t * cbk, int32_t which, char * key)
 }
 
 int32_t ec_dict_data_combine(dict_t * dict, char * key, data_t * value,
-                             void * arg)
+        void * arg)
 {
     ec_dict_combine_t * data = arg;
 
     if ((strcmp(key, GF_XATTR_PATHINFO_KEY) == 0) ||
-        (strcmp(key, GF_XATTR_USER_PATHINFO_KEY) == 0))
+            (strcmp(key, GF_XATTR_USER_PATHINFO_KEY) == 0))
     {
         return ec_dict_data_concat("(<EC:%s> { })", data->cbk, data->which,
-                                   key, data->cbk->fop->xl->name);
+                key, data->cbk->fop->xl->name);
     }
 
     if (strncmp(key, GF_XATTR_CLRLK_CMD, strlen(GF_XATTR_CLRLK_CMD)) == 0)
@@ -771,7 +771,7 @@ int32_t ec_dict_data_combine(dict_t * dict, char * key, data_t * value,
         return ec_dict_data_max32(data->cbk, data->which, key);
     }
     if ((strcmp(key, GLUSTERFS_INODELK_COUNT) == 0) ||
-        (strcmp(key, GLUSTERFS_ENTRYLK_COUNT) == 0)) {
+            (strcmp(key, GLUSTERFS_ENTRYLK_COUNT) == 0)) {
         return ec_dict_data_max32(data->cbk, data->which, key);
     }
 
@@ -826,7 +826,7 @@ int32_t ec_dict_combine(ec_cbk_data_t * cbk, int32_t which)
 }
 
 int32_t ec_vector_compare(struct iovec * dst_vector, int32_t dst_count,
-                          struct iovec * src_vector, int32_t src_count)
+        struct iovec * src_vector, int32_t src_count)
 {
     int32_t dst_size = 0, src_size = 0;
 
@@ -846,11 +846,11 @@ int32_t ec_flock_compare(struct gf_flock * dst, struct gf_flock * src)
 {
 
     if ((dst->l_type != src->l_type) ||
-        (dst->l_whence != src->l_whence) ||
-        (dst->l_start != src->l_start) ||
-        (dst->l_len != src->l_len) ||
-        (dst->l_pid != src->l_pid) ||
-        !is_same_lkowner(&dst->l_owner, &src->l_owner))
+            (dst->l_whence != src->l_whence) ||
+            (dst->l_start != src->l_start) ||
+            (dst->l_len != src->l_len) ||
+            (dst->l_pid != src->l_pid) ||
+            !is_same_lkowner(&dst->l_owner, &src->l_owner))
     {
         return 0;
     }
@@ -931,21 +931,21 @@ void ec_statvfs_combine(struct statvfs * dst, struct statvfs * src)
 }
 
 int32_t ec_combine_check(ec_cbk_data_t * dst, ec_cbk_data_t * src,
-                         ec_combine_f combine)
+        ec_combine_f combine)
 {
     ec_fop_data_t * fop = dst->fop;
 
-	if(fop->id == GF_FOP_WRITE){
-		gf_msg_debug(fop->xl->name,0,"A pipelined cbk");
-		if((src->combined & dst->combined)!=0)
-			return 0;
-	}
+    if(fop->id == GF_FOP_WRITE){
+        gf_msg_debug(fop->xl->name,0,"A pipelined cbk");
+        if((src->combined & dst->combined)!=0)
+            return 0;
+    }
 
     if (dst->op_ret != src->op_ret)
     {
         gf_msg_debug (fop->xl->name, 0, "Mismatching return code in "
-                                            "answers of '%s': %d <-> %d",
-               ec_fop_name(fop->id), dst->op_ret, src->op_ret);
+                "answers of '%s': %d <-> %d",
+                ec_fop_name(fop->id), dst->op_ret, src->op_ret);
 
         return 0;
     }
@@ -954,8 +954,8 @@ int32_t ec_combine_check(ec_cbk_data_t * dst, ec_cbk_data_t * src,
         if (dst->op_errno != src->op_errno)
         {
             gf_msg_debug (fop->xl->name, 0, "Mismatching errno code in "
-                                                "answers of '%s': %d <-> %d",
-                   ec_fop_name(fop->id), dst->op_errno, src->op_errno);
+                    "answers of '%s': %d <-> %d",
+                    ec_fop_name(fop->id), dst->op_errno, src->op_errno);
 
             return 0;
         }
@@ -981,71 +981,71 @@ int32_t ec_combine_check(ec_cbk_data_t * dst, ec_cbk_data_t * src,
 
 void ec_combine (ec_cbk_data_t *newcbk, ec_combine_f combine)
 {
-		ec_fop_data_t *fop = newcbk->fop;
-		ec_cbk_data_t *cbk = NULL, *tmp = NULL;
-		struct list_head *item = NULL;
-		int32_t needed = 0;
-		char str[32];
+    ec_fop_data_t *fop = newcbk->fop;
+    ec_cbk_data_t *cbk = NULL, *tmp = NULL;
+    struct list_head *item = NULL;
+    int32_t needed = 0;
+    char str[32];
 
-		LOCK(&fop->lock);
+    LOCK(&fop->lock);
 
-		static int called=0;
+    static int called=0;
 
-		if(fop->id==GF_FOP_WRITE){
-				printf("EC combine is called %d times by %d.\n",++called,fop->id);
-		}
+    if(fop->id==GF_FOP_WRITE){
+        printf("EC combine is called %d times by %d.\n",++called,fop->id);
+    }
 
-		fop->received |= newcbk->mask;
+    fop->received |= newcbk->mask;
 
-		item = fop->cbk_list.prev;
-		newcbk->combined = (1LL<<newcbk->idx);
+    item = fop->cbk_list.prev;
+    newcbk->combined = (1LL<<newcbk->idx);
 
-		list_for_each_entry(cbk, &fop->cbk_list, list)
-		{
-				if (ec_combine_check(newcbk, cbk, combine))
-				{
-						newcbk->count += cbk->count;
-						newcbk->mask |= cbk->mask;
-						if(fop->id==GF_FOP_WRITE){
-							newcbk->combined |= cbk->combined;
-							newcbk->iatt[0].ia_size = min(newcbk->iatt[0].ia_size,cbk->iatt[0].ia_size);
-							newcbk->iatt[1].ia_size = max(newcbk->iatt[1].ia_size,cbk->iatt[1].ia_size);
-							//The logic of block control is wrong.
-							newcbk->iatt[0].ia_blocks = min(newcbk->iatt[0].ia_blocks,cbk->iatt[0].ia_blocks);
-							newcbk->iatt[1].ia_blocks = max(newcbk->iatt[1].ia_blocks,cbk->iatt[1].ia_blocks);
-						}
+    list_for_each_entry(cbk, &fop->cbk_list, list)
+    {
+        if (ec_combine_check(newcbk, cbk, combine))
+        {
+            newcbk->count += cbk->count;
+            newcbk->mask |= cbk->mask;
+            if(fop->id==GF_FOP_WRITE){
+                newcbk->combined |= cbk->combined;
+                newcbk->iatt[0].ia_size = min(newcbk->iatt[0].ia_size,cbk->iatt[0].ia_size);
+                newcbk->iatt[1].ia_size = max(newcbk->iatt[1].ia_size,cbk->iatt[1].ia_size);
+                //The logic of block control is wrong.
+                newcbk->iatt[0].ia_blocks = min(newcbk->iatt[0].ia_blocks,cbk->iatt[0].ia_blocks);
+                newcbk->iatt[1].ia_blocks = max(newcbk->iatt[1].ia_blocks,cbk->iatt[1].ia_blocks);
+            }
 
-						item = cbk->list.prev;
-						while (item != &fop->cbk_list)
-						{
-								tmp = list_entry(item, ec_cbk_data_t, list);
-								if (tmp->count >= newcbk->count)
-								{
-										break;
-								}
-								item = item->prev;
-						}
-						list_del(&cbk->list);
+            item = cbk->list.prev;
+            while (item != &fop->cbk_list)
+            {
+                tmp = list_entry(item, ec_cbk_data_t, list);
+                if (tmp->count >= newcbk->count)
+                {
+                    break;
+                }
+                item = item->prev;
+            }
+            list_del(&cbk->list);
 
-						newcbk->next = cbk;
+            newcbk->next = cbk;
 
-						break;
-				}
-		}
-		list_add(&newcbk->list, item);
+            break;
+        }
+    }
+    list_add(&newcbk->list, item);
 
-		ec_trace("ANSWER", fop, "combine=%s[%d]",
-						ec_bin(str, sizeof(str), newcbk->mask, 0), newcbk->count);
+    ec_trace("ANSWER", fop, "combine=%s[%d]",
+            ec_bin(str, sizeof(str), newcbk->mask, 0), newcbk->count);
 
-		cbk = list_entry(fop->cbk_list.next, ec_cbk_data_t, list);
-		if ((fop->mask ^ fop->remaining) == fop->received) {
-				needed = fop->minimum - cbk->count;
-		}
+    cbk = list_entry(fop->cbk_list.next, ec_cbk_data_t, list);
+    if ((fop->mask ^ fop->remaining) == fop->received) {
+        needed = fop->minimum - cbk->count;
+    }
 
-		UNLOCK(&fop->lock);
+    UNLOCK(&fop->lock);
 
-		if (needed > 0) {
-				ec_dispatch_next(fop, newcbk->idx);
-		}
+    if (needed > 0) {
+        ec_dispatch_next(fop, newcbk->idx);
+    }
 
 }
