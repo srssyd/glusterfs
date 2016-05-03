@@ -133,8 +133,6 @@ union _ec_cbk
     fop_xattrop_cbk_t      xattrop;
     fop_fxattrop_cbk_t     fxattrop;
     fop_zerofill_cbk_t     zerofill;
-
-    fop_seek_cbk_t         seek;
 };
 
 struct _ec_lock
@@ -210,7 +208,6 @@ struct _ec_fop_data
     uintptr_t          received; /* Mask of responses */
     uintptr_t          good;
 
-
     uid_t              uid;
     gid_t              gid;
 
@@ -246,8 +243,6 @@ struct _ec_fop_data
     struct gf_flock    flock;
     struct iovec      *vector;
     struct iobref     *buffers;
-
-    gf_seek_what_t     seek;
 };
 
 struct _ec_cbk_data
@@ -276,13 +271,8 @@ struct _ec_cbk_data
     struct gf_flock  flock;
     struct iovec *   vector;
     struct iobref *  buffers;
-
     char            *str;
     gf_dirent_t      entries;
-    off_t            offset;
-    gf_seek_what_t   what;
-
-    uintptr_t        combined;
 };
 
 struct _ec_heal

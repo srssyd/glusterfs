@@ -24,7 +24,6 @@
 #define EC_XATTR_DIRTY   EC_XATTR_PREFIX"dirty"
 
 #define EC_VERSION_SIZE 2
-
 #define EC_SHD_INODE_LRU_LIMIT          10
 
 typedef enum {
@@ -55,6 +54,7 @@ struct _ec
     gf_lock_t         lock;
     gf_timer_t *      timer;
     gf_boolean_t      shutdown;
+    gf_boolean_t      eager_lock;
     uint32_t          background_heals;
     uint32_t          heal_wait_qlen;
     struct list_head  pending_fops;

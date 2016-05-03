@@ -1,13 +1,12 @@
 /*
+  Copyright (c) 2012-2014 DataLab, s.l. <http://www.datalab.es>
+  This file is part of GlusterFS.
 
-   Copyright (c) 2012-2014 DataLab, s.l. <http://www.datalab.es>
-   This file is part of GlusterFS.
-
-   This file is licensed to you under your choice of the GNU Lesser
-   General Public License, version 3 or any later version (LGPLv3 or
-   later), or the GNU General Public License, version 2 (GPLv2), in all
-   cases as published by the Free Software Foundation.
-   */
+  This file is licensed to you under your choice of the GNU Lesser
+  General Public License, version 3 or any later version (LGPLv3 or
+  later), or the GNU General Public License, version 2 (GPLv2), in all
+  cases as published by the Free Software Foundation.
+*/
 
 #include "byte-order.h"
 #include "hashfn.h"
@@ -21,46 +20,33 @@
 #include "ec-method.h"
 #include "ec.h"
 #include "ec-messages.h"
-#include "ec-method.h"
 
-#include "xlator.h"
-#include "defaults.h"
+uint32_t
+ec_select_first_by_read_policy (ec_t *ec, ec_fop_data_t *fop)
+{
+        if (ec->read_policy == EC_ROUND_ROBIN) {
+                return ec->idx;
+        } else if (ec->read_policy == EC_GFID_HASH) {
+                if (fop->use_fd) {
+                        return SuperFastHash((char *)fop->fd->inode->gfid,
+                                   sizeof(fop->fd->inode->gfid)) % ec->nodes;
+                } else {
+                        if (gf_uuid_is_null (fop->loc[0].gfid))
+                                loc_gfid (&fop->loc[0], fop->loc[0].gfid);
+                        return SuperFastHash((char *)fop->loc[0].gfid,
+                                   sizeof(fop->loc[0].gfid)) % ec->nodes;
+                }
+        }
+        return 0;
+}
 
-#include "thpool.h"
-#include "common-utils.h"
-#include "iobuf.h"
-#include "stack.h"
-#include <sys/time.h>
-
-static threadpool thpool = NULL;
-
-int32_t ec_child_valid(ec_t * ec, ec_fop_data_t * fop, int32_t idx) {
+int32_t ec_child_valid(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
+{
     return (idx < ec->nodes) && (((fop->remaining >> idx) & 1) == 1);
 }
 
-    uint32_t
-ec_select_first_by_read_policy (ec_t *ec, ec_fop_data_t *fop)
-{
-    if (ec->read_policy == EC_ROUND_ROBIN) {
-        return ec->idx;
-    } else if (ec->read_policy == EC_GFID_HASH) {
-        if (fop->use_fd) {
-            return SuperFastHash((char *)fop->fd->inode->gfid,
-                    sizeof(fop->fd->inode->gfid)) % ec->nodes;
-        } else {
-            if (gf_uuid_is_null (fop->loc[0].gfid))
-                loc_gfid (&fop->loc[0], fop->loc[0].gfid);
-            return SuperFastHash((char *)fop->loc[0].gfid,
-                    sizeof(fop->loc[0].gfid)) % ec->nodes;
-        }
-    }
-    return 0;
-}
-
-
 int32_t ec_child_next(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
 {
-
     while (!ec_child_valid(ec, fop, idx))
     {
         if (++idx >= ec->nodes)
@@ -77,8 +63,8 @@ int32_t ec_child_next(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
 }
 
 int32_t ec_heal_report(call_frame_t * frame, void * cookie, xlator_t * this,
-        int32_t op_ret, int32_t op_errno, uintptr_t mask,
-        uintptr_t good, uintptr_t bad, dict_t * xdata)
+                       int32_t op_ret, int32_t op_errno, uintptr_t mask,
+                       uintptr_t good, uintptr_t bad, dict_t * xdata)
 {
     if (op_ret < 0) {
         gf_msg (this->name, GF_LOG_WARNING, op_errno,
@@ -98,7 +84,6 @@ int32_t ec_heal_report(call_frame_t * frame, void * cookie, xlator_t * this,
 
 int32_t ec_fop_needs_heal(ec_fop_data_t *fop)
 {
-
     ec_t *ec = fop->xl->private;
 
     return (ec->xl_up & ~(fop->remaining | fop->good)) != 0;
@@ -106,7 +91,6 @@ int32_t ec_fop_needs_heal(ec_fop_data_t *fop)
 
 void ec_check_status(ec_fop_data_t * fop)
 {
-
     ec_t * ec = fop->xl->private;
     int32_t partial = 0;
 
@@ -116,7 +100,7 @@ void ec_check_status(ec_fop_data_t * fop)
 
     if (fop->answer->op_ret >= 0) {
         if ((fop->id == GF_FOP_LOOKUP) ||
-                (fop->id == GF_FOP_STAT) || (fop->id == GF_FOP_FSTAT)) {
+            (fop->id == GF_FOP_STAT) || (fop->id == GF_FOP_FSTAT)) {
             partial = fop->answer->iatt[0].ia_type == IA_IFDIR;
         } else if (fop->id == GF_FOP_OPENDIR) {
             partial = 1;
@@ -135,7 +119,7 @@ void ec_check_status(ec_fop_data_t * fop)
     {
         if (fop->fd != NULL) {
             ec_fheal(NULL, fop->xl, -1, EC_MINIMUM_ONE, ec_heal_report, NULL,
-                    fop->fd, partial, NULL);
+                     fop->fd, partial, NULL);
         }
     }
     else
@@ -153,7 +137,6 @@ void ec_check_status(ec_fop_data_t * fop)
 
 void ec_update_good(ec_fop_data_t *fop, uintptr_t good)
 {
-
     fop->good = good;
 
     /* Fops that are executed only on one brick do not have enough information
@@ -165,7 +148,6 @@ void ec_update_good(ec_fop_data_t *fop, uintptr_t good)
 
 void ec_lock_update_good(ec_lock_t *lock, ec_fop_data_t *fop)
 {
-
     /* Fops that are executed only on one brick do not have enough information
      * to update the global mask of good bricks. */
     if (fop->expected == 1) {
@@ -182,7 +164,6 @@ void ec_lock_update_good(ec_lock_t *lock, ec_fop_data_t *fop)
 
 void __ec_fop_set_error(ec_fop_data_t * fop, int32_t error)
 {
-
     if ((error != 0) && (fop->error == 0))
     {
         fop->error = error;
@@ -191,7 +172,6 @@ void __ec_fop_set_error(ec_fop_data_t * fop, int32_t error)
 
 void ec_fop_set_error(ec_fop_data_t * fop, int32_t error)
 {
-
     LOCK(&fop->lock);
 
     __ec_fop_set_error(fop, error);
@@ -199,7 +179,7 @@ void ec_fop_set_error(ec_fop_data_t * fop, int32_t error)
     UNLOCK(&fop->lock);
 }
 
-    gf_boolean_t
+gf_boolean_t
 ec_cbk_set_error(ec_cbk_data_t *cbk, int32_t error, gf_boolean_t ro)
 {
     if ((error != 0) && (cbk->op_ret >= 0)) {
@@ -217,7 +197,7 @@ ec_cbk_set_error(ec_cbk_data_t *cbk, int32_t error, gf_boolean_t ro)
     return (cbk->op_ret < 0);
 }
 
-    ec_cbk_data_t *
+ec_cbk_data_t *
 ec_fop_prepare_answer(ec_fop_data_t *fop, gf_boolean_t ro)
 {
     ec_cbk_data_t *cbk;
@@ -244,7 +224,6 @@ ec_fop_prepare_answer(ec_fop_data_t *fop, gf_boolean_t ro)
 
 void ec_sleep(ec_fop_data_t *fop)
 {
-
     LOCK(&fop->lock);
 
     GF_ASSERT (fop->refs > 0);
@@ -256,7 +235,6 @@ void ec_sleep(ec_fop_data_t *fop)
 
 int32_t ec_check_complete(ec_fop_data_t * fop, ec_resume_f resume)
 {
-
     int32_t error = -1;
 
     LOCK(&fop->lock);
@@ -278,12 +256,10 @@ int32_t ec_check_complete(ec_fop_data_t * fop, ec_resume_f resume)
     UNLOCK(&fop->lock);
 
     return error;
-
 }
 
 void ec_resume(ec_fop_data_t * fop, int32_t error)
 {
-
     ec_resume_f resume = NULL;
 
     LOCK(&fop->lock);
@@ -318,7 +294,6 @@ void ec_resume(ec_fop_data_t * fop, int32_t error)
 
 void ec_resume_parent(ec_fop_data_t * fop, int32_t error)
 {
-
     ec_fop_data_t * parent;
 
     parent = fop->parent;
@@ -330,18 +305,18 @@ void ec_resume_parent(ec_fop_data_t * fop, int32_t error)
     }
 }
 
-    gf_boolean_t
+gf_boolean_t
 ec_is_recoverable_error (int32_t op_errno)
 {
-    switch (op_errno) {
+        switch (op_errno) {
         case ENOTCONN:
         case ESTALE:
         case ENOENT:
         case EBADFD:/*Opened fd but brick is disconnected*/
         case EIO:/*Backend-fs crash like XFS/ext4 etc*/
-            return _gf_true;
-    }
-    return _gf_false;
+                return _gf_true;
+        }
+        return _gf_false;
 }
 
 void ec_complete(ec_fop_data_t * fop)
@@ -357,39 +332,10 @@ void ec_complete(ec_fop_data_t * fop)
     if (--fop->winds == 0) {
         if (fop->answer == NULL) {
             if (!list_empty(&fop->cbk_list)) {
-                if(fop->id == GF_FOP_WRITE ){
-                    ec_cbk_data_t *new_cbk = list_entry(fop->cbk_list.next,ec_cbk_data_t,list);
-                    int good_count=0;
-                    list_for_each_entry(cbk,&fop->cbk_list,list)
-                    {
-                        good_count++;
-                        new_cbk->mask &= cbk->mask;
-                        new_cbk->op_ret = max(new_cbk->op_ret,cbk->op_ret);
-                        new_cbk->iatt[0].ia_size = min(new_cbk->iatt[0].ia_size,cbk->iatt[0].ia_size);
-                        new_cbk->iatt[1].ia_size = max(new_cbk->iatt[1].ia_size,cbk->iatt[1].ia_size);
-                        new_cbk->iatt[0].ia_blocks = min(new_cbk->iatt[0].ia_blocks,cbk->iatt[0].ia_blocks);
-                        new_cbk->iatt[1].ia_blocks = max(new_cbk->iatt[1].ia_blocks,cbk->iatt[1].ia_blocks);
-
-                        //printf("ia_size:%d %d.\nblock:%d %d\n",cbk->iatt[0].ia_size,cbk->iatt[1].ia_size,cbk->iatt[0].ia_blocks,cbk->iatt[1].ia_blocks);
-                    }
-                    if(good_count < GET_REAL_PIPE_COUNT(fop)){
-                        printf("An error occurs in one pipeline. Good:%d.\n",good_count);
-
-                        new_cbk->mask = 0;
-                    }else if(good_count > GET_REAL_PIPE_COUNT(fop)){
-                        //do nothing.
-                        printf("An error occurs in one pipeline. Good:%d.\n",good_count);
-
-                    }
-                    //printf("ok: %d\n",good_count);
-                    cbk = new_cbk;
-
-                }else{
-                    cbk = list_entry(fop->cbk_list.next, ec_cbk_data_t, list);
-                }
+                cbk = list_entry(fop->cbk_list.next, ec_cbk_data_t, list);
                 healing_count = ec_bits_count (cbk->mask & fop->healing);
-                /* fop shouldn't be treated as success if it is not
-                 * successful on at least fop->minimum good copies*/
+                    /* fop shouldn't be treated as success if it is not
+                     * successful on at least fop->minimum good copies*/
                 if ((cbk->count - healing_count) >= fop->minimum) {
                     fop->answer = cbk;
 
@@ -417,38 +363,36 @@ void ec_complete(ec_fop_data_t * fop)
     }
 
     ec_fop_data_release(fop);
-
 }
 
 /* There could be already granted locks sitting on the bricks, unlock for which
  * must be wound at all costs*/
-
-    static gf_boolean_t
+static gf_boolean_t
 ec_must_wind (ec_fop_data_t *fop)
 {
-    if ((fop->id == GF_FOP_INODELK) || (fop->id == GF_FOP_FINODELK) ||
+        if ((fop->id == GF_FOP_INODELK) || (fop->id == GF_FOP_FINODELK) ||
             (fop->id == GF_FOP_LK)) {
-        if (fop->flock.l_type == F_UNLCK)
-            return _gf_true;
-    } else if ((fop->id == GF_FOP_ENTRYLK) ||
-            (fop->id == GF_FOP_FENTRYLK)) {
-        if (fop->entrylk_cmd == ENTRYLK_UNLOCK)
-            return _gf_true;
-    }
+                if (fop->flock.l_type == F_UNLCK)
+                        return _gf_true;
+        } else if ((fop->id == GF_FOP_ENTRYLK) ||
+                   (fop->id == GF_FOP_FENTRYLK)) {
+                if (fop->entrylk_cmd == ENTRYLK_UNLOCK)
+                        return _gf_true;
+        }
 
-    return _gf_false;
+        return _gf_false;
 }
 
-    static gf_boolean_t
+static gf_boolean_t
 ec_internal_op (ec_fop_data_t *fop)
 {
-    if (ec_must_wind (fop))
-        return _gf_true;
-    if (fop->id == GF_FOP_XATTROP)
-        return _gf_true;
-    if (fop->id == GF_FOP_FXATTROP)
-        return _gf_true;
-    return _gf_false;
+        if (ec_must_wind (fop))
+                return _gf_true;
+        if (fop->id == GF_FOP_XATTROP)
+                return _gf_true;
+        if (fop->id == GF_FOP_FXATTROP)
+                return _gf_true;
+        return _gf_false;
 }
 
 int32_t ec_child_select(ec_fop_data_t * fop)
@@ -463,7 +407,7 @@ int32_t ec_child_select(ec_fop_data_t * fop)
      * head/tail read in case of writev fop. Unlocks shouldn't do this because
      * unlock should go on all subvols where lock is performed*/
     if (fop->parent && !ec_internal_op (fop)) {
-        fop->mask &= (fop->parent->mask & ~fop->parent->healing);
+            fop->mask &= (fop->parent->mask & ~fop->parent->healing);
     }
 
     if ((fop->mask & ~ec->xl_up) != 0)
@@ -493,11 +437,11 @@ int32_t ec_child_select(ec_fop_data_t * fop)
     }
 
     if (ec->read_policy == EC_ROUND_ROBIN) {
-        first = ec->idx;
-        if (++first >= ec->nodes) {
-            first = 0;
-        }
-        ec->idx = first;
+            first = ec->idx;
+            if (++first >= ec->nodes) {
+                first = 0;
+            }
+            ec->idx = first;
     }
 
     /*Unconditionally wind on healing subvolumes*/
@@ -526,7 +470,6 @@ int32_t ec_child_select(ec_fop_data_t * fop)
 
 int32_t ec_dispatch_next(ec_fop_data_t * fop, int32_t idx)
 {
-
     ec_t * ec = fop->xl->private;
 
     LOCK(&fop->lock);
@@ -582,239 +525,8 @@ void ec_dispatch_mask(ec_fop_data_t * fop, uintptr_t mask)
     }
 }
 
-struct disptch_param{
-    uintptr_t mask;
-    struct iobref ** iobref_batch;
-    struct iobuf ** iobuf_batch;
-    ec_fop_data_t * fop;
-    ssize_t bufsize;
-    size_t offset;
-    pthread_mutex_t *lock;
-
-};
-
-void *ec_dispatch_batch_mask_single_thread(void * data){
-
-    struct disptch_param* param = (struct disptch_param*)data;
-    uintptr_t mask = param->mask;
-
-    int32_t idx = 0;
-    int32_t i = 0;
-    ec_fop_data_t * fop = param->fop;
-    struct iobref ** iobref_batch = param->iobref_batch;
-    struct iobuf ** iobuf_batch = param->iobuf_batch;
-    ec_t * ec = fop->xl->private;
-    ssize_t bufsize = param->bufsize;
-    int32_t ec_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
-            int32_t op_ret, int32_t op_errno, struct iatt *prestat,
-            struct iatt *poststat, dict_t *xdata);
-    int32_t ec_fsync_cbk(call_frame_t *frame,void *cookie,xlator_t *this,int32_t op_ret,int32_t op_errno,struct iatt * prebuf,struct iatt* postbuf,dict_t * xdata);
-
-    pthread_mutex_lock(param->lock);
-    while (mask != 0)
-    {
-        if ((mask & 1) != 0)
-        {
-            ec_trace("WIND", fop, "idx=%d", idx);
-
-            struct iovec vector[1];
-
-            vector[0].iov_base = iobuf_batch[i]->ptr;
-            vector[0].iov_len = bufsize;
-
-
-
-            STACK_WIND_COOKIE(fop->frame, ec_writev_cbk, (void *) (uintptr_t) idx,
-                    ec->xl_list[idx], ec->xl_list[idx]->fops->writev,
-                    fop->fd, vector, 1, (fop->offset+param->offset) / ec->fragments,
-                    fop->uint32, iobref_batch[i], fop->xdata);
-
-            STACK_WIND_COOKIE(fop->frame,ec_fsync_cbk,(void *)(uintptr_t) idx,ec->xl_list[idx],ec->xl_list[idx]->fops->fsync,fop->fd,fop->int32,NULL);
-            i++;
-        }
-        idx++;
-        mask >>= 1;
-    }
-    pthread_mutex_unlock(param->lock);
-
-}
-
-void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
-{
-
-    int32_t i,t;
-    ec_t * ec = fop->xl->private;
-    xlator_t *this = ec->xl;
-    int32_t count = ec_bits_count(mask);
-    int32_t idx;
-    ssize_t size = fop->vector[0].iov_len, bufsize = 0;
-    int32_t err = -ENOMEM;
-
-    int pipe_count = GET_REAL_PIPE_COUNT(fop);
-    struct iobref ** iobref_batch = malloc(sizeof(struct iobref*) *count * pipe_count);
-    struct iobuf ** iobuf_batch = malloc(sizeof(struct iobuf*) *count *pipe_count);
-    uint8_t ** out_ptr = malloc(sizeof(uint8_t *) *count *pipe_count);
-    uint8_t * rows = malloc(sizeof(uint8_t) * count);
-
-
-    int32_t ec_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
-            int32_t op_ret, int32_t op_errno, struct iatt *prestat,
-            struct iatt *poststat, dict_t *xdata);
-
-    struct timeval time;
-    gettimeofday(&time,NULL);
-    printf("Begin to encode,timestamp %u.%u\n",time.tv_sec,time.tv_usec);
-    int block_size = EC_METHOD_CHUNK_SIZE * ec->fragments;
-    int block_count = (size + block_size -1 )/block_size;
-
-
-    LOCK(&fop->lock);
-
-    ec_trace("EXECUTE", fop, "mask=%lX", mask);
-    printf("A dispathced write with offset:%d\n",fop->offset);
-
-    fop->remaining ^= mask;
-
-    //Modified by syd.
-    fop->winds += 1 * count * pipe_count;
-    fop->refs += 2 * count * pipe_count;
-
-    UNLOCK(&fop->lock);
-
-    pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-
-    ssize_t total = 0;
-
-    struct disptch_param *params=malloc(sizeof(struct disptch_param ) *pipe_count);
-
-    for(t=0;t<pipe_count;t++)
-    {
-        for (i = 0; i < count; i++)
-        {
-            iobref_batch[t*count+i] = iobref_new();
-            if (iobref_batch[t*count+i] == NULL) {
-                goto out;
-            }
-            size = min(fop->vector[0].iov_len-total,(block_count/pipe_count + (t<(block_count%pipe_count))) * block_size);
-
-            bufsize = size / ec->fragments;
-            iobuf_batch[t*count+i] = iobuf_get2(fop->xl->ctx->iobuf_pool, bufsize);
-            if (iobuf_batch[t*count+i] == NULL) {
-                goto out;
-            }
-            err = iobref_add(iobref_batch[t*count+i], iobuf_batch[t*count+i]);
-            if (err != 0) {
-                goto out;
-            }
-            out_ptr[t*count+i] = iobuf_batch[t*count+i]->ptr;
-        }
-
-        gettimeofday(&time,NULL);
-        printf("Begin to encode with pipe %d,timestamp %u.%u,size=%dMB\n",t,time.tv_sec,time.tv_usec,size>>20);
-
-
-
-        idx = 0;
-        int row_mask = mask;
-        i = 0;
-        while(row_mask != 0)
-        {
-            if((row_mask & 1) != 0)
-            {
-                rows[i] = idx;
-                i++;
-            }
-            idx ++;
-            row_mask >>= 1;
-        }
-
-
-        ec_method_batch_encode(size, ec->fragments, count,rows, fop->vector[0].iov_base + total,
-                out_ptr+t*count);
-        gettimeofday(&time,NULL);
-        printf("Finish encode with pipe %d,timestamp %u.%u\n",t,time.tv_sec,time.tv_usec);
-
-
-        struct disptch_param param;
-        param.bufsize = bufsize;
-        param.iobuf_batch = iobuf_batch+t*count;
-        param.iobref_batch = iobref_batch+t*count;
-        param.fop = fop;
-        param.mask = mask;
-        param.offset = total;
-        param.lock=&lock;
-        params[t]=param;
-
-        //ec_dispatch_batch_mask_single_thread(&params[t]);
-        //gettimeofday(&time,NULL);
-        //TODO: We should maintain a threadpool for each thread which can handle write, or the threadpool may waits for extra thread.
-        thpool_add_work(thpool,ec_dispatch_batch_mask_single_thread,(void *)&params[t]);
-        //gettimeofday(&time,NULL);
-
-        total += size;
-
-    }
-    gettimeofday(&time,NULL);
-    printf("Waiting for the finish of thpool,timestamp %u.%u.\n",time.tv_sec,time.tv_usec);
-    thpool_wait(thpool);
-    gettimeofday(&time,NULL);
-    printf("Finish waiting for the finish of thpool,timestamp %u.%u.\n",time.tv_sec,time.tv_usec);
-
-    free(params);
-
-
-
-    for(i=0;i<pipe_count * count;i++)
-    {
-        if (iobuf_batch[i] != NULL)
-        {
-            iobuf_unref(iobuf_batch[i]);
-        }
-    }
-    for(i=0;i<pipe_count * count;i++)
-    {
-        if (iobref_batch[i] != NULL)
-        {
-            iobref_unref(iobref_batch[i]);
-        }
-    }
-
-    free(iobref_batch);
-    free(iobuf_batch);
-    free(out_ptr);
-    free(rows);
-
-    //printf("End of this writev. File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
-    return ;
-out:
-    for(i=0;i<pipe_count * count;i++)
-    {
-        if (iobuf_batch[i] != NULL)
-        {
-            iobuf_unref(iobuf_batch[i]);
-        }
-    }
-    for(i=0;i<pipe_count * count;i++)
-    {
-        if (iobref_batch[i] != NULL)
-        {
-            iobref_unref(iobref_batch[i]);
-        }
-    }
-    //printf("Start at ec_writev_cbk : File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
-    ec_writev_cbk(fop->frame, (void *)(uintptr_t)idx, fop->xl, -1, -err, NULL,
-            NULL, NULL);
-    //printf("End at ec_writev_cbk : File:%s, Function:%s,Line:%u, time: %lf pid=%d, tid = %d \n",__FILE__, __FUNCTION__,__LINE__, getUTtime(), getpid(),gettid() );
-
-    free(iobref_batch);
-    free(iobuf_batch);
-    free(out_ptr);
-    free(rows);
-}
-
 void ec_dispatch_start(ec_fop_data_t * fop)
 {
-
     fop->answer = NULL;
     fop->good = 0;
 
@@ -828,7 +540,6 @@ void ec_dispatch_start(ec_fop_data_t * fop)
 
 void ec_dispatch_one(ec_fop_data_t * fop)
 {
-
     ec_dispatch_start(fop);
 
     if (ec_child_select(fop))
@@ -840,7 +551,7 @@ void ec_dispatch_one(ec_fop_data_t * fop)
     }
 }
 
-    gf_boolean_t
+gf_boolean_t
 ec_dispatch_one_retry(ec_fop_data_t *fop, ec_cbk_data_t **cbk)
 {
     ec_cbk_data_t *tmp;
@@ -850,7 +561,7 @@ ec_dispatch_one_retry(ec_fop_data_t *fop, ec_cbk_data_t **cbk)
         *cbk = tmp;
     }
     if ((tmp != NULL) && (tmp->op_ret < 0) &&
-            ec_is_recoverable_error (tmp->op_errno)) {
+        ec_is_recoverable_error (tmp->op_errno)) {
         GF_ASSERT (fop->mask & (1ULL << tmp->idx));
         fop->mask ^= (1ULL << tmp->idx);
         if (fop->mask) {
@@ -863,7 +574,6 @@ ec_dispatch_one_retry(ec_fop_data_t *fop, ec_cbk_data_t **cbk)
 
 void ec_dispatch_inc(ec_fop_data_t * fop)
 {
-
     ec_dispatch_start(fop);
 
     if (ec_child_select(fop))
@@ -875,37 +585,21 @@ void ec_dispatch_inc(ec_fop_data_t * fop)
     }
 }
 
-    void
+void
 ec_dispatch_all (ec_fop_data_t *fop)
 {
-    ec_dispatch_start(fop);
+        ec_dispatch_start(fop);
 
-    if (ec_child_select(fop)) {
-        fop->expected = ec_bits_count(fop->remaining);
-        fop->first = 0;
+        if (ec_child_select(fop)) {
+                fop->expected = ec_bits_count(fop->remaining);
+                fop->first = 0;
 
-        ec_dispatch_mask(fop, fop->remaining);
-    }
+                ec_dispatch_mask(fop, fop->remaining);
+        }
 }
-
-
-void ec_dispatch_batch(ec_fop_data_t *fop)
-{
-
-    ec_dispatch_start(fop);
-
-    if (ec_child_select(fop)) {
-        fop->expected = ec_bits_count(fop->remaining);
-        fop->first = 0;
-
-        ec_dispatch_batch_mask(fop, fop->remaining);
-    }
-}
-
 
 void ec_dispatch_min(ec_fop_data_t * fop)
 {
-
     ec_t * ec = fop->xl->private;
     uintptr_t mask;
     int32_t idx, count;
@@ -930,13 +624,12 @@ void ec_dispatch_min(ec_fop_data_t * fop)
 
 ec_lock_t *ec_lock_allocate(ec_fop_data_t *fop, loc_t *loc)
 {
-
     ec_t *ec = fop->xl->private;
     ec_lock_t * lock;
     int32_t err;
 
     if ((loc->inode == NULL) ||
-            (gf_uuid_is_null(loc->gfid) && gf_uuid_is_null(loc->inode->gfid)))
+        (gf_uuid_is_null(loc->gfid) && gf_uuid_is_null(loc->inode->gfid)))
     {
         gf_msg (fop->xl->name, GF_LOG_ERROR, EINVAL,
                 EC_MSG_INVALID_INODE,
@@ -969,7 +662,6 @@ ec_lock_t *ec_lock_allocate(ec_fop_data_t *fop, loc_t *loc)
 
 void ec_lock_destroy(ec_lock_t * lock)
 {
-
     loc_wipe(&lock->loc);
     if (lock->fd != NULL) {
         fd_unref(lock->fd);
@@ -980,19 +672,18 @@ void ec_lock_destroy(ec_lock_t * lock)
 
 int32_t ec_lock_compare(ec_lock_t * lock1, ec_lock_t * lock2)
 {
-
     return gf_uuid_compare(lock1->loc.gfid, lock2->loc.gfid);
 }
 
 void ec_lock_insert(ec_fop_data_t *fop, ec_lock_t *lock, uint32_t flags,
-        loc_t *base)
+                    loc_t *base)
 {
     ec_lock_link_t *link;
 
     /* This check is only prepared for up to 2 locks per fop. If more locks
      * are needed this must be changed. */
     if ((fop->lock_count > 0) &&
-            (ec_lock_compare(fop->locks[0].lock, lock) < 0)) {
+        (ec_lock_compare(fop->locks[0].lock, lock) < 0)) {
         fop->first_lock = fop->lock_count;
     } else {
         /* When the first lock is added to the current fop, request lock
@@ -1006,7 +697,7 @@ void ec_lock_insert(ec_fop_data_t *fop, ec_lock_t *lock, uint32_t flags,
             }
         }
         if (dict_set_str(fop->xdata, GLUSTERFS_INODELK_DOM_COUNT,
-                    fop->xl->name) != 0) {
+                         fop->xl->name) != 0) {
             ec_fop_set_error(fop, ENOMEM);
             return;
         }
@@ -1025,7 +716,7 @@ void ec_lock_insert(ec_fop_data_t *fop, ec_lock_t *lock, uint32_t flags,
 }
 
 void ec_lock_prepare_inode_internal(ec_fop_data_t *fop, loc_t *loc,
-        uint32_t flags, loc_t *base)
+                                    uint32_t flags, loc_t *base)
 {
     ec_lock_t *lock = NULL;
     ec_inode_t *ctx;
@@ -1055,7 +746,7 @@ void ec_lock_prepare_inode_internal(ec_fop_data_t *fop, loc_t *loc,
             /* Combine data/meta updates */
             fop->locks[0].update[EC_DATA_TXN] |= (flags & EC_UPDATE_DATA) != 0;
             fop->locks[0].update[EC_METADATA_TXN] |=
-                (flags & EC_UPDATE_META) != 0;
+                                                 (flags & EC_UPDATE_META) != 0;
 
             /* Only one base inode is allowed per fop, so there shouldn't be
              * overwrites here. */
@@ -1067,7 +758,7 @@ void ec_lock_prepare_inode_internal(ec_fop_data_t *fop, loc_t *loc,
         }
 
         ec_trace("LOCK_INODELK", fop, "lock=%p, inode=%p. Lock already "
-                "acquired", lock, loc->inode);
+                                      "acquired", lock, loc->inode);
 
         goto insert;
     }
@@ -1095,12 +786,11 @@ unlock:
 
 void ec_lock_prepare_inode(ec_fop_data_t *fop, loc_t *loc, uint32_t flags)
 {
-
     ec_lock_prepare_inode_internal(fop, loc, flags, NULL);
 }
 
 void ec_lock_prepare_parent_inode(ec_fop_data_t *fop, loc_t *loc,
-        uint32_t flags)
+                                  uint32_t flags)
 {
     loc_t tmp, *base = NULL;
     int32_t err;
@@ -1128,7 +818,6 @@ void ec_lock_prepare_parent_inode(ec_fop_data_t *fop, loc_t *loc,
 
 void ec_lock_prepare_fd(ec_fop_data_t *fop, fd_t *fd, uint32_t flags)
 {
-
     loc_t loc;
     int32_t err;
 
@@ -1148,36 +837,36 @@ void ec_lock_prepare_fd(ec_fop_data_t *fop, fd_t *fd, uint32_t flags)
     loc_wipe(&loc);
 }
 
-    gf_boolean_t
+gf_boolean_t
 ec_config_check (ec_fop_data_t *fop, ec_config_t *config)
 {
     ec_t *ec;
 
     ec = fop->xl->private;
     if ((config->version != EC_CONFIG_VERSION) ||
-            (config->algorithm != EC_CONFIG_ALGORITHM) ||
-            (config->gf_word_size != EC_GF_BITS) ||
-            (config->bricks != ec->nodes) ||
-            (config->redundancy != ec->redundancy) ||
-            (config->chunk_size != EC_METHOD_CHUNK_SIZE)) {
+        (config->algorithm != EC_CONFIG_ALGORITHM) ||
+        (config->gf_word_size != EC_GF_BITS) ||
+        (config->bricks != ec->nodes) ||
+        (config->redundancy != ec->redundancy) ||
+        (config->chunk_size != EC_METHOD_CHUNK_SIZE)) {
         uint32_t data_bricks;
 
         /* This combination of version/algorithm requires the following
            values. Incorrect values for these fields are a sign of
-corruption:
+           corruption:
 
-redundancy > 0
-redundancy * 2 < bricks
-gf_word_size must be a power of 2
-chunk_size (in bits) must be a multiple of gf_word_size *
-(bricks - redundancy) */
+             redundancy > 0
+             redundancy * 2 < bricks
+             gf_word_size must be a power of 2
+             chunk_size (in bits) must be a multiple of gf_word_size *
+                 (bricks - redundancy) */
 
         data_bricks = config->bricks - config->redundancy;
         if ((config->redundancy < 1) ||
-                (config->redundancy * 2 >= config->bricks) ||
-                !ec_is_power_of_2(config->gf_word_size) ||
-                ((config->chunk_size * 8) % (config->gf_word_size * data_bricks)
-                 != 0)) {
+            (config->redundancy * 2 >= config->bricks) ||
+            !ec_is_power_of_2(config->gf_word_size) ||
+            ((config->chunk_size * 8) % (config->gf_word_size * data_bricks)
+                                                                       != 0)) {
             gf_msg (fop->xl->name, GF_LOG_ERROR, EINVAL,
                     EC_MSG_INVALID_CONFIG,
                     "Invalid or corrupted config");
@@ -1187,9 +876,9 @@ chunk_size (in bits) must be a multiple of gf_word_size *
                     "Unsupported config "
                     "(V=%u, A=%u, W=%u, "
                     "N=%u, R=%u, S=%u)",
-                    config->version, config->algorithm,
-                    config->gf_word_size, config->bricks,
-                    config->redundancy, config->chunk_size);
+                   config->version, config->algorithm,
+                   config->gf_word_size, config->bricks,
+                   config->redundancy, config->chunk_size);
         }
 
         return _gf_false;
@@ -1198,10 +887,10 @@ chunk_size (in bits) must be a multiple of gf_word_size *
     return _gf_true;
 }
 
-    int32_t
+int32_t
 ec_prepare_update_cbk (call_frame_t *frame, void *cookie,
-        xlator_t *this, int32_t op_ret, int32_t op_errno,
-        dict_t *dict, dict_t *xdata)
+                       xlator_t *this, int32_t op_ret, int32_t op_errno,
+                       dict_t *dict, dict_t *xdata)
 {
     struct list_head list;
     ec_fop_data_t *fop = cookie, *parent, *tmp;
@@ -1234,7 +923,7 @@ ec_prepare_update_cbk (call_frame_t *frame, void *cookie,
     }
 
     op_errno = -ec_dict_del_array(dict, EC_XATTR_VERSION, ctx->pre_version,
-            EC_VERSION_SIZE);
+                                  EC_VERSION_SIZE);
     if (op_errno != 0) {
         gf_msg (this->name, GF_LOG_ERROR, op_errno,
                 EC_MSG_VER_XATTR_GET_FAIL,
@@ -1248,7 +937,7 @@ ec_prepare_update_cbk (call_frame_t *frame, void *cookie,
     ctx->have_version = _gf_true;
 
     if (lock->loc.inode->ia_type == IA_IFREG ||
-            lock->loc.inode->ia_type == IA_INVAL) {
+        lock->loc.inode->ia_type == IA_INVAL) {
         op_errno = -ec_dict_del_number(dict, EC_XATTR_SIZE, &ctx->pre_size);
         if (op_errno != 0) {
             if (lock->loc.inode->ia_type == IA_IFREG) {
@@ -1266,7 +955,8 @@ ec_prepare_update_cbk (call_frame_t *frame, void *cookie,
 
         op_errno = -ec_dict_del_config(dict, EC_XATTR_CONFIG, &ctx->config);
         if (op_errno != 0) {
-            if (lock->loc.inode->ia_type == IA_IFREG) {
+            if ((lock->loc.inode->ia_type == IA_IFREG) ||
+                (op_errno != ENODATA)) {
                 gf_msg (this->name, GF_LOG_ERROR, op_errno,
                         EC_MSG_CONFIG_XATTR_GET_FAIL,
                         "Unable to get config xattr");
@@ -1335,7 +1025,6 @@ unlock:
 
 void ec_get_size_version(ec_lock_link_t *link)
 {
-
     loc_t loc;
     ec_lock_t *lock;
     ec_inode_t *ctx;
@@ -1360,8 +1049,8 @@ void ec_get_size_version(ec_lock_link_t *link)
     /* Determine if there's something we need to retrieve for the current
      * operation. */
     if (!lock->query &&
-            (lock->loc.inode->ia_type != IA_IFREG) &&
-            (lock->loc.inode->ia_type != IA_INVAL)) {
+        (lock->loc.inode->ia_type != IA_IFREG) &&
+        (lock->loc.inode->ia_type != IA_INVAL)) {
         return;
     }
 
@@ -1393,17 +1082,17 @@ void ec_get_size_version(ec_lock_link_t *link)
     /* Once we know that an xattrop will be needed, we try to get all available
      * information in a single call. */
     error = ec_dict_set_array(dict, EC_XATTR_VERSION, allzero,
-            EC_VERSION_SIZE);
+                              EC_VERSION_SIZE);
     if (error == 0) {
         error = ec_dict_set_array(dict, EC_XATTR_DIRTY, allzero,
-                EC_VERSION_SIZE);
+                                  EC_VERSION_SIZE);
     }
     if (error != 0) {
         goto out;
     }
 
     if (lock->loc.inode->ia_type == IA_IFREG ||
-            lock->loc.inode->ia_type == IA_INVAL) {
+        lock->loc.inode->ia_type == IA_INVAL) {
         error = ec_dict_set_number(dict, EC_XATTR_SIZE, 0);
         if (error == 0) {
             error = ec_dict_set_number(dict, EC_XATTR_CONFIG, 0);
@@ -1439,8 +1128,8 @@ void ec_get_size_version(ec_lock_link_t *link)
         }
 
         ec_xattrop (fop->frame, fop->xl, fop->mask, fop->minimum,
-                ec_prepare_update_cbk, link, &loc,
-                GF_XATTROP_ADD_ARRAY64, dict, NULL);
+                    ec_prepare_update_cbk, link, &loc,
+                    GF_XATTROP_ADD_ARRAY64, dict, NULL);
     } else {
         ec_fxattrop(fop->frame, fop->xl, fop->mask, fop->minimum,
                 ec_prepare_update_cbk, link, lock->fd,
@@ -1465,7 +1154,7 @@ out:
 }
 
 gf_boolean_t ec_get_inode_size(ec_fop_data_t *fop, inode_t *inode,
-        uint64_t *size)
+                               uint64_t *size)
 {
     ec_inode_t *ctx;
     gf_boolean_t found = _gf_false;
@@ -1489,7 +1178,7 @@ unlock:
 }
 
 gf_boolean_t ec_set_inode_size(ec_fop_data_t *fop, inode_t *inode,
-        uint64_t size)
+                               uint64_t size)
 {
     ec_inode_t *ctx;
     gf_boolean_t found = _gf_false;
@@ -1521,7 +1210,6 @@ unlock:
 
 void ec_clear_inode_info(ec_fop_data_t *fop, inode_t *inode)
 {
-
     ec_inode_t *ctx;
 
     LOCK(&inode->lock);
@@ -1547,9 +1235,9 @@ unlock:
 }
 
 int32_t ec_get_real_size_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
-        int32_t op_ret, int32_t op_errno, inode_t *inode,
-        struct iatt *buf, dict_t *xdata,
-        struct iatt *postparent)
+                             int32_t op_ret, int32_t op_errno, inode_t *inode,
+                             struct iatt *buf, dict_t *xdata,
+                             struct iatt *postparent)
 {
     ec_fop_data_t *fop = cookie;
     ec_lock_link_t *link;
@@ -1575,7 +1263,6 @@ int32_t ec_get_real_size_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
  */
 void ec_get_real_size(ec_lock_link_t *link)
 {
-
     ec_fop_data_t *fop;
     dict_t *xdata;
 
@@ -1605,7 +1292,7 @@ void ec_get_real_size(ec_lock_link_t *link)
      * is only used to return an iatt struct related to an inode that is not
      * locked and have not suffered any operation. */
     ec_lookup(fop->frame, fop->xl, fop->mask, 1, ec_get_real_size_cbk, link,
-            link->base, xdata);
+              link->base, xdata);
 
 out:
     if (xdata != NULL) {
@@ -1613,7 +1300,7 @@ out:
     }
 }
 
-    static void
+static void
 ec_lock_update_fd(ec_lock_t *lock, ec_fop_data_t *fop)
 {
     /* If the fop has an fd available, attach it to the lock structure to be
@@ -1626,7 +1313,7 @@ ec_lock_update_fd(ec_lock_t *lock, ec_fop_data_t *fop)
     }
 }
 
-    static void
+static void
 ec_lock_wake_shared(ec_lock_t *lock, struct list_head *list)
 {
     ec_fop_data_t *fop;
@@ -1665,7 +1352,7 @@ ec_lock_wake_shared(ec_lock_t *lock, struct list_head *list)
     }
 }
 
-    static void
+static void
 ec_lock_apply(ec_lock_link_t *link)
 {
     ec_fop_data_t *fop = link->fop;
@@ -1679,8 +1366,7 @@ ec_lock_apply(ec_lock_link_t *link)
 
 gf_boolean_t ec_lock_acquire(ec_lock_link_t *link);
 
-
-    static void
+static void
 ec_lock_resume_shared(struct list_head *list)
 {
     ec_lock_link_t *link;
@@ -1704,7 +1390,6 @@ ec_lock_resume_shared(struct list_head *list)
 
 void ec_lock_acquired(ec_lock_link_t *link)
 {
-
     struct list_head list;
     ec_lock_t *lock;
     ec_fop_data_t *fop;
@@ -1733,7 +1418,7 @@ void ec_lock_acquired(ec_lock_link_t *link)
 }
 
 int32_t ec_locked(call_frame_t *frame, void *cookie, xlator_t *this,
-        int32_t op_ret, int32_t op_errno, dict_t *xdata)
+                  int32_t op_ret, int32_t op_errno, dict_t *xdata)
 {
     ec_fop_data_t *fop = cookie;
     ec_lock_link_t *link = NULL;
@@ -1768,12 +1453,12 @@ gf_boolean_t ec_lock_acquire(ec_lock_link_t *link)
         ec_owner_set(fop->frame, lock);
 
         ec_trace("LOCK_ACQUIRE", fop, "lock=%p, inode=%p", lock,
-                lock->loc.inode);
+                 lock->loc.inode);
 
         lock->flock.l_type = F_WRLCK;
         ec_inodelk(fop->frame, fop->xl, -1, EC_MINIMUM_ALL, ec_locked,
-                link, fop->xl->name, &lock->loc, F_SETLKW, &lock->flock,
-                NULL);
+                   link, fop->xl->name, &lock->loc, F_SETLKW, &lock->flock,
+                   NULL);
 
         return _gf_false;
     }
@@ -1785,7 +1470,7 @@ gf_boolean_t ec_lock_acquire(ec_lock_link_t *link)
     return _gf_true;
 }
 
-    static gf_boolean_t
+static gf_boolean_t
 ec_lock_assign_owner(ec_lock_link_t *link)
 {
     ec_fop_data_t *fop;
@@ -1865,9 +1550,9 @@ unlock:
     return assigned;
 }
 
-    static void
+static void
 ec_lock_next_owner(ec_lock_link_t *link, ec_cbk_data_t *cbk,
-        gf_boolean_t release)
+                   gf_boolean_t release)
 {
     struct list_head list;
     ec_lock_t *lock = link->lock;
@@ -1914,7 +1599,6 @@ ec_lock_next_owner(ec_lock_link_t *link, ec_cbk_data_t *cbk,
 
 void ec_lock(ec_fop_data_t *fop)
 {
-
     ec_lock_link_t *link;
 
     /* There is a chance that ec_resume is called on fop even before ec_sleep.
@@ -1936,7 +1620,7 @@ void ec_lock(ec_fop_data_t *fop)
     ec_resume(fop, 0);
 }
 
-    void
+void
 ec_lock_unfreeze(ec_lock_link_t *link)
 {
     struct list_head list;
@@ -1979,7 +1663,7 @@ ec_lock_unfreeze(ec_lock_link_t *link)
 }
 
 int32_t ec_unlocked(call_frame_t *frame, void *cookie, xlator_t *this,
-        int32_t op_ret, int32_t op_errno, dict_t *xdata)
+                    int32_t op_ret, int32_t op_errno, dict_t *xdata)
 {
     ec_fop_data_t *fop = cookie;
     ec_lock_link_t *link = fop->data;
@@ -2000,7 +1684,6 @@ int32_t ec_unlocked(call_frame_t *frame, void *cookie, xlator_t *this,
 
 void ec_unlock_lock(ec_lock_link_t *link)
 {
-
     ec_lock_t *lock;
     ec_fop_data_t *fop;
 
@@ -2014,20 +1697,20 @@ void ec_unlock_lock(ec_lock_link_t *link)
 
         lock->flock.l_type = F_UNLCK;
         ec_trace("UNLOCK_INODELK", fop, "lock=%p, inode=%p", lock,
-                lock->loc.inode);
+                 lock->loc.inode);
 
         ec_inodelk(fop->frame, fop->xl, lock->mask, EC_MINIMUM_ONE,
-                ec_unlocked, link, fop->xl->name, &lock->loc, F_SETLK,
-                &lock->flock, NULL);
+                   ec_unlocked, link, fop->xl->name, &lock->loc, F_SETLK,
+                   &lock->flock, NULL);
     } else {
         ec_lock_unfreeze(link);
     }
 }
 
 int32_t ec_update_size_version_done(call_frame_t * frame, void * cookie,
-        xlator_t * this, int32_t op_ret,
-        int32_t op_errno, dict_t * xattr,
-        dict_t * xdata)
+                                    xlator_t * this, int32_t op_ret,
+                                    int32_t op_errno, dict_t * xattr,
+                                    dict_t * xdata)
 {
     ec_fop_data_t *fop = cookie;
     ec_lock_link_t *link;
@@ -2036,8 +1719,8 @@ int32_t ec_update_size_version_done(call_frame_t * frame, void * cookie,
 
     if (op_ret < 0) {
         gf_msg(fop->xl->name, fop_log_level (fop->id, op_errno), op_errno,
-                EC_MSG_SIZE_VERS_UPDATE_FAIL,
-                "Failed to update version and size");
+               EC_MSG_SIZE_VERS_UPDATE_FAIL,
+               "Failed to update version and size");
     } else {
         fop->parent->good &= fop->good;
         link = fop->data;
@@ -2047,7 +1730,7 @@ int32_t ec_update_size_version_done(call_frame_t * frame, void * cookie,
         ec_lock_update_good(lock, fop);
 
         if (ec_dict_del_array(xattr, EC_XATTR_VERSION, ctx->post_version,
-                    EC_VERSION_SIZE) == 0) {
+                              EC_VERSION_SIZE) == 0) {
             ctx->pre_version[0] = ctx->post_version[0];
             ctx->pre_version[1] = ctx->post_version[1];
 
@@ -2059,7 +1742,7 @@ int32_t ec_update_size_version_done(call_frame_t * frame, void * cookie,
             ctx->have_size = _gf_true;
         }
         if ((ec_dict_del_config(xdata, EC_XATTR_CONFIG, &ctx->config) == 0) &&
-                ec_config_check(fop->parent, &ctx->config)) {
+            ec_config_check(fop->parent, &ctx->config)) {
             ctx->have_config = _gf_true;
         }
 
@@ -2067,17 +1750,17 @@ int32_t ec_update_size_version_done(call_frame_t * frame, void * cookie,
     }
 
     if ((fop->parent->id != GF_FOP_FLUSH) &&
-            (fop->parent->id != GF_FOP_FSYNC) &&
-            (fop->parent->id != GF_FOP_FSYNCDIR)) {
+        (fop->parent->id != GF_FOP_FSYNC) &&
+        (fop->parent->id != GF_FOP_FSYNCDIR)) {
         ec_unlock_lock(fop->data);
     }
 
     return 0;
 }
 
-    void
+void
 ec_update_size_version(ec_lock_link_t *link, uint64_t *version,
-        uint64_t size, uint64_t *dirty)
+                       uint64_t size, uint64_t *dirty)
 {
     ec_fop_data_t *fop;
     ec_lock_t *lock;
@@ -2091,7 +1774,7 @@ ec_update_size_version(ec_lock_link_t *link, uint64_t *version,
     GF_ASSERT(version[1] < 0x100000000);
 
     ec_trace("UPDATE", fop, "version=%ld/%ld, size=%ld, dirty=%ld/%ld",
-            version[0], version[1], size, dirty[0], dirty[1]);
+             version[0], version[1], size, dirty[0], dirty[1]);
 
     dict = dict_new();
     if (dict == NULL) {
@@ -2105,7 +1788,7 @@ ec_update_size_version(ec_lock_link_t *link, uint64_t *version,
      * update it. */
     if (!ctx->have_version || (version[0] != 0) || (version[1] != 0)) {
         err = ec_dict_set_array(dict, EC_XATTR_VERSION, version,
-                EC_VERSION_SIZE);
+                                EC_VERSION_SIZE);
         if (err != 0) {
             goto out;
         }
@@ -2142,13 +1825,13 @@ ec_update_size_version(ec_lock_link_t *link, uint64_t *version,
     fop->frame->root->gid = 0;
 
     if (link->lock->fd == NULL) {
-        ec_xattrop(fop->frame, fop->xl, lock->good_mask, EC_MINIMUM_MIN,
-                ec_update_size_version_done, link, &link->lock->loc,
-                GF_XATTROP_ADD_ARRAY64, dict, NULL);
+            ec_xattrop(fop->frame, fop->xl, lock->good_mask, EC_MINIMUM_MIN,
+                       ec_update_size_version_done, link, &link->lock->loc,
+                       GF_XATTROP_ADD_ARRAY64, dict, NULL);
     } else {
-        ec_fxattrop(fop->frame, fop->xl, lock->good_mask, EC_MINIMUM_MIN,
-                ec_update_size_version_done, link, link->lock->fd,
-                GF_XATTROP_ADD_ARRAY64, dict, NULL);
+            ec_fxattrop(fop->frame, fop->xl, lock->good_mask, EC_MINIMUM_MIN,
+                       ec_update_size_version_done, link, link->lock->fd,
+                       GF_XATTROP_ADD_ARRAY64, dict, NULL);
     }
 
     fop->frame->root->uid = fop->uid;
@@ -2169,7 +1852,7 @@ out:
             "Unable to update version and size");
 }
 
-    gf_boolean_t
+gf_boolean_t
 ec_update_info(ec_lock_link_t *link)
 {
     ec_lock_t *lock;
@@ -2193,7 +1876,7 @@ ec_update_info(ec_lock_link_t *link)
     memset(ctx->dirty, 0, sizeof(ctx->dirty));
 
     if ((version[0] != 0) || (version[1] != 0) ||
-            (dirty[0] != 0) || (dirty[1] != 0)) {
+        (dirty[0] != 0) || (dirty[1] != 0)) {
         ec_update_size_version(link, version, size, dirty);
 
         return _gf_true;
@@ -2202,7 +1885,7 @@ ec_update_info(ec_lock_link_t *link)
     return _gf_false;
 }
 
-    void
+void
 ec_unlock_now(ec_lock_link_t *link)
 {
     ec_trace("UNLOCK_NOW", link->fop, "lock=%p", link->lock);
@@ -2214,60 +1897,59 @@ ec_unlock_now(ec_lock_link_t *link)
     ec_resume(link->fop, 0);
 }
 
-    void
+void
 ec_unlock_timer_del(ec_lock_link_t *link)
 {
-    int32_t before = 0;
-    ec_lock_t *lock;
-    inode_t *inode;
-    gf_boolean_t now = _gf_false;
+        int32_t before = 0;
+        ec_lock_t *lock;
+        inode_t *inode;
+        gf_boolean_t now = _gf_false;
 
-    lock = link->lock;
+        lock = link->lock;
 
-    /* A race condition can happen if timer expires, calls this function
-     * and the lock is released (lock->loc is wiped) but the fop is not
-     * fully completed yet (it's still on the list of pending fops). In
-     * this case, this function can also be called if ec_unlock_force() is
-     * called. */
-    inode = lock->loc.inode;
-    if (inode == NULL) {
-        return;
-    }
+        /* A race condition can happen if timer expires, calls this function
+         * and the lock is released (lock->loc is wiped) but the fop is not
+         * fully completed yet (it's still on the list of pending fops). In
+         * this case, this function can also be called if ec_unlock_force() is
+         * called. */
+        inode = lock->loc.inode;
+        if (inode == NULL) {
+                return;
+        }
 
-    LOCK(&inode->lock);
+        LOCK(&inode->lock);
 
-    if (lock->timer != NULL) {
-        ec_trace("UNLOCK_DELAYED", link->fop, "lock=%p", lock);
+        if (lock->timer != NULL) {
+                ec_trace("UNLOCK_DELAYED", link->fop, "lock=%p", lock);
 
-        gf_timer_call_cancel(link->fop->xl->ctx, lock->timer);
-        lock->timer = NULL;
+                gf_timer_call_cancel(link->fop->xl->ctx, lock->timer);
+                lock->timer = NULL;
 
-        lock->release = now = _gf_true;
+                lock->release = now = _gf_true;
 
-        /* TODO: If the assertion is really true, following code is
-         *       not needed. */
-        GF_ASSERT(list_empty(&lock->waiting));
+                /* TODO: If the assertion is really true, following code is
+                 *       not needed. */
+                GF_ASSERT(list_empty(&lock->waiting));
 
-        before = lock->refs + lock->refs_frozen;
-        list_splice_init(&lock->waiting, &lock->frozen);
-        lock->refs_frozen += lock->refs - lock->inserted - 1;
-        lock->refs = 1 + lock->inserted;
-        /* We moved around the locks, so total number of locks shouldn't
-         * change by this operation*/
-        GF_ASSERT (before == (lock->refs + lock->refs_frozen));
-    }
+                before = lock->refs + lock->refs_frozen;
+                list_splice_init(&lock->waiting, &lock->frozen);
+                lock->refs_frozen += lock->refs - lock->inserted - 1;
+                lock->refs = 1 + lock->inserted;
+                /* We moved around the locks, so total number of locks shouldn't
+                 * change by this operation*/
+                GF_ASSERT (before == (lock->refs + lock->refs_frozen));
+        }
 
-    UNLOCK(&inode->lock);
+        UNLOCK(&inode->lock);
 
-    if (now) {
-        ec_unlock_now(link);
-    }
+        if (now) {
+                ec_unlock_now(link);
+        }
 }
 
 void ec_unlock_timer_cbk(void *data)
 {
-
-    ec_unlock_timer_del(data);
+        ec_unlock_timer_del(data);
 }
 
 void ec_unlock_timer_add(ec_lock_link_t *link)
@@ -2298,23 +1980,23 @@ void ec_unlock_timer_add(ec_lock_link_t *link)
          * contention, or ec is shutting down, do not delay lock release. */
         if (!lock->release && !ec_fop_needs_heal(fop) && !ec->shutdown) {
             ec_trace("UNLOCK_DELAY", fop, "lock=%p, release=%d", lock,
-                    lock->release);
+                     lock->release);
 
             delay.tv_sec = 1;
             delay.tv_nsec = 0;
             lock->timer = gf_timer_call_after(fop->xl->ctx, delay,
-                    ec_unlock_timer_cbk, link);
+                                              ec_unlock_timer_cbk, link);
             if (lock->timer == NULL) {
                 gf_msg(fop->xl->name, GF_LOG_WARNING, ENOMEM,
-                        EC_MSG_UNLOCK_DELAY_FAILED,
-                        "Unable to delay an "
-                        "unlock");
+                       EC_MSG_UNLOCK_DELAY_FAILED,
+                       "Unable to delay an "
+                       "unlock");
 
                 lock->release = now = _gf_true;
             }
         } else {
             ec_trace("UNLOCK_FORCE", fop, "lock=%p, release=%d", lock,
-                    lock->release);
+                     lock->release);
             lock->release = now = _gf_true;
         }
 
@@ -2343,9 +2025,8 @@ void ec_unlock(ec_fop_data_t *fop)
     }
 }
 
-void ec_flush_size_version(ec_fop_data_t * fop)
+void ec_flush_size_version(ec_fop_data_t *fop)
 {
-
     GF_ASSERT(fop->lock_count == 1);
     ec_update_info(&fop->locks[0]);
 }
@@ -2353,23 +2034,26 @@ void ec_flush_size_version(ec_fop_data_t * fop)
 void ec_lock_reuse(ec_fop_data_t *fop)
 {
     ec_cbk_data_t *cbk;
+    ec_t *ec = NULL;
     int32_t i, count;
     gf_boolean_t release = _gf_false;
-
+    ec = fop->xl->private;
     cbk = fop->answer;
-    if (cbk != NULL) {
+
+    if (ec->eager_lock && cbk != NULL) {
         if (cbk->xdata != NULL) {
             if ((dict_get_int32(cbk->xdata, GLUSTERFS_INODELK_COUNT,
-                            &count) == 0) && (count > 1)) {
+                                &count) == 0) && (count > 1)) {
                 release = _gf_true;
             }
             if (release) {
                 gf_msg_debug (fop->xl->name, 0,
-                        "Lock contention detected");
+                       "Lock contention detected");
             }
         }
     } else {
-        /* If we haven't get an answer with enough quorum, we always release
+        /* If eager lock is disabled or If we haven't get
+         * an answer with enough quorum, we always release
          * the lock. */
         release = _gf_true;
     }
@@ -2387,9 +2071,9 @@ void __ec_manager(ec_fop_data_t * fop, int32_t error)
         ec_trace("MANAGER", fop, "error=%d", error);
 
         if (!ec_must_wind (fop)) {
-            if (ec->xl_up_count < ec->fragments) {
-                error = ENOTCONN;
-            }
+                if (ec->xl_up_count < ec->fragments) {
+                    error = ENOTCONN;
+                }
         }
 
         if (error != 0) {
@@ -2423,7 +2107,6 @@ void __ec_manager(ec_fop_data_t * fop, int32_t error)
 
 void ec_manager(ec_fop_data_t * fop, int32_t error)
 {
-
     GF_ASSERT(fop->jobs == 0);
     GF_ASSERT(fop->winds == 0);
     GF_ASSERT(fop->error == 0);
@@ -2434,20 +2117,4 @@ void ec_manager(ec_fop_data_t * fop, int32_t error)
     }
 
     __ec_manager(fop, error);
-}
-void ec_thpool_init(int num){
-    thpool = thpool_init(num);
-}
-inline int GET_REAL_PIPE_COUNT(ec_fop_data_t *fop)
-{
-    if (fop->vector[0].iov_len < THR_PIPELINE) {
-#if AUTO_PIPE
-        return 1;
-#else
-        return PIPE_COUNT;
-#endif
-    }
-    else {
-        return PIPE_COUNT;
-    }
 }

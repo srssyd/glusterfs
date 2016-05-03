@@ -161,7 +161,6 @@ size_t ec_iov_copy_to(void * dst, struct iovec * vector, int32_t count,
 int32_t ec_dict_set_array(dict_t *dict, char *key, uint64_t value[],
                           int32_t size)
 {
-    int         ret = -1;
     uint64_t   *ptr = NULL;
     int32_t     vindex;
 
@@ -176,10 +175,7 @@ int32_t ec_dict_set_array(dict_t *dict, char *key, uint64_t value[],
     for (vindex = 0; vindex < size; vindex++) {
          ptr[vindex] = hton64(value[vindex]);
     }
-    ret = dict_set_bin(dict, key, ptr, sizeof(uint64_t) * size);
-    if (ret)
-         GF_FREE (ptr);
-    return ret;
+    return dict_set_bin(dict, key, ptr, sizeof(uint64_t) * size);
 }
 
 
@@ -226,7 +222,6 @@ int32_t ec_dict_del_array(dict_t *dict, char *key, uint64_t value[],
 
 int32_t ec_dict_set_number(dict_t * dict, char * key, uint64_t value)
 {
-    int        ret = -1;
     uint64_t * ptr;
 
     ptr = GF_MALLOC(sizeof(value), gf_common_mt_char);
@@ -236,11 +231,7 @@ int32_t ec_dict_set_number(dict_t * dict, char * key, uint64_t value)
 
     *ptr = hton64(value);
 
-    ret = dict_set_bin(dict, key, ptr, sizeof(value));
-    if (ret)
-        GF_FREE (ptr);
-
-    return ret;
+    return dict_set_bin(dict, key, ptr, sizeof(value));
 }
 
 int32_t ec_dict_del_number(dict_t * dict, char * key, uint64_t * value)
@@ -268,7 +259,6 @@ int32_t ec_dict_del_number(dict_t * dict, char * key, uint64_t * value)
 
 int32_t ec_dict_set_config(dict_t * dict, char * key, ec_config_t * config)
 {
-    int ret = -1;
     uint64_t * ptr, data;
 
     if (config->version > EC_CONFIG_VERSION)
@@ -296,11 +286,7 @@ int32_t ec_dict_set_config(dict_t * dict, char * key, ec_config_t * config)
 
     *ptr = hton64(data);
 
-    ret = dict_set_bin(dict, key, ptr, sizeof(uint64_t));
-    if (ret)
-        GF_FREE (ptr);
-
-    return ret;
+    return dict_set_bin(dict, key, ptr, sizeof(uint64_t));
 }
 
 int32_t ec_dict_del_config(dict_t * dict, char * key, ec_config_t * config)
@@ -321,6 +307,19 @@ int32_t ec_dict_del_config(dict_t * dict, char * key, ec_config_t * config)
     }
 
     data = ntoh64(*(uint64_t *)ptr);
+    /* Currently we need to get the config xattr for entries of type IA_INVAL.
+     * These entries can later become IA_DIR entries (after inode_link()),
+     * which don't have a config xattr. However, since the xattr is requested
+     * using an xattrop() fop, it will always return a config full of 0's
+     * instead of saying that it doesn't exist.
+     *
+     * We need to filter out this case and consider that a config xattr == 0 is
+     * the same than a non-existant xattr. Otherwise ec_config_check() will
+     * fail.
+     */
+    if (data == 0) {
+        return -ENODATA;
+    }
 
     config->version = (data >> 56) & 0xff;
     if (config->version > EC_CONFIG_VERSION)
