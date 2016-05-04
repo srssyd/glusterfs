@@ -72,7 +72,12 @@ int32_t ec_parse_options(xlator_t * this)
         ec->bits_for_nodes++;
         mask <<= 1;
     }
-    ec->node_mask = (1ULL << ec->nodes) - 1ULL;
+    assert(ec->nodes <= 64);
+    if(ec->nodes!=64)
+        ec->node_mask = (1ULL << ec->nodes) - 1ULL;
+    else
+        ec->node_mask = 18446744073709551615ULL;
+    
     ec->fragment_size = EC_METHOD_CHUNK_SIZE;
     ec->stripe_size = ec->fragment_size * ec->fragments;
 

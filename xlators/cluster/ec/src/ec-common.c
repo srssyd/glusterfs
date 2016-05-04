@@ -702,7 +702,7 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 
 
         idx = 0;
-        int row_mask = mask;
+        uint64_t row_mask = mask;
         i = 0;
         while(row_mask != 0)
         {
