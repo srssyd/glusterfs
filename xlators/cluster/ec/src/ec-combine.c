@@ -975,16 +975,11 @@ void ec_combine (ec_cbk_data_t *newcbk, ec_combine_f combine)
 
     LOCK(&fop->lock);
 
-    static int called=0;
-
-    if(fop->id==GF_FOP_WRITE){
-        printf("EC combine is called %d times by %d.\n",++called,fop->id);
-    }
 
     fop->received |= newcbk->mask;
 
     item = fop->cbk_list.prev;
-    newcbk->combined = (1LL<<newcbk->idx);
+    newcbk->combined = (1ULL<<newcbk->idx);
 
     list_for_each_entry(cbk, &fop->cbk_list, list)
     {

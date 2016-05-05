@@ -242,8 +242,11 @@ int32_t ec_fsync_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
     ec_trace("CBK", fop, "idx=%d, frame=%p, op_ret=%d, op_errno=%d", idx,
              frame, op_ret, op_errno);
 
+    LOCK(&fop->lock);
+    int32_t op_id = fop->id;
+    UNLOCK(&fop->lock);
     //A sync function which is called by write to use pipeline.
-    if(fop->id == GF_FOP_WRITE){
+    if(op_id == GF_FOP_WRITE){
         goto out;
     }
 
@@ -284,8 +287,7 @@ int32_t ec_fsync_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
 out:
     if (fop != NULL)
     {
-
-        if(fop->id != GF_FOP_WRITE)
+        if(op_id != GF_FOP_WRITE)
             ec_complete(fop);
         else
             ec_fop_data_release(fop);

@@ -629,6 +629,8 @@ void *ec_dispatch_batch_mask_single_thread(void * data){
 void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 {
 
+    assert(fop->id == GF_FOP_WRITE);
+
 	int32_t i,t;
 	ec_t * ec = fop->xl->private;
 	int32_t count = ec_bits_count(mask);

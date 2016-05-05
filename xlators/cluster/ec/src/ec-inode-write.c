@@ -1525,7 +1525,7 @@ int32_t ec_manager_batch_writev(ec_fop_data_t *fop, int32_t state)
                 }
                 if (fop->error == 0) {
                     cbk->op_ret *= ec->fragments;
-		    		cbk->op_ret *= GET_REAL_PIPE_COUNT(fop);
+		    		cbk->op_ret *= GET_REAL_PIPE_COUNT(fop); 
                     if (cbk->op_ret < fop->head) {
                         cbk->op_ret = 0;
                     } else {

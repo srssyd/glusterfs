@@ -276,7 +276,7 @@ struct _ec_cbk_data
     gf_dirent_t      entries;
     off_t            offset;
 
-    uintptr_t        combined;
+    uint64_t        combined;
 };
 
 struct _ec_heal
