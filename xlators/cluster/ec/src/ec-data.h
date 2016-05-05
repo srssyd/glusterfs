@@ -243,6 +243,17 @@ struct _ec_fop_data
     struct gf_flock    flock;
     struct iovec      *vector;
     struct iobref     *buffers;
+
+
+    //int my_flag;
+    off_t curr_off;
+    int first_rebuild;
+    struct iobref * iobref;
+    struct iobuf * iobuf;
+    pthread_mutex_t mutex_pipeline;
+    //off_t total_size;
+    //pthread_cond_t cond_pipeline;
+    //ec_cbk_data_t *answer_previous;
 };
 
 struct _ec_cbk_data
