@@ -1145,8 +1145,7 @@ int32_t ec_readv_rebuild(ec_t * ec, ec_fop_data_t * fop, ec_cbk_data_t * cbk)
     struct iobuf * iobuf = NULL;
     uint8_t * buff = NULL, * ptr;
     size_t fsize = 0, size = 0, max = 0;
-    int32_t i = 0;
-    int64_t err = -ENOMEM;
+    int32_t i = 0, err = -ENOMEM;
 
     if (cbk->op_ret < 0) {
         err = -cbk->op_errno;
@@ -1157,75 +1156,93 @@ int32_t ec_readv_rebuild(ec_t * ec, ec_fop_data_t * fop, ec_cbk_data_t * cbk)
     /* This shouldn't fail because we have the inode locked. */
     GF_ASSERT(ec_get_inode_size(fop, fop->fd->inode, &cbk->iatt[0].ia_size));
 
-    if (cbk->op_ret > 0) {
+    if (cbk->op_ret >= 0) {
         struct iovec vector[1];
         uint8_t * blocks[cbk->count];
         uint32_t values[cbk->count];
 
         fsize = cbk->op_ret;
-        size = fsize * ec->fragments;
+        size = fop->size * ec->fragments;
+
         buff = GF_MALLOC(size, gf_common_mt_char);
+
         if (buff == NULL) {
             goto out;
         }
         ptr = buff;
         for (i = 0, ans = cbk; ans != NULL; i++, ans = ans->next) {
+
             values[i] = ans->idx;
             blocks[i] = ptr;
             ptr += ec_iov_copy_to(ptr, ans->vector, ans->int32, 0, fsize);
-        }
 
-        iobref = iobref_new();
-        if (iobref == NULL) {
-            goto out;
         }
-        iobuf = iobuf_get2(fop->xl->ctx->iobuf_pool, size);
-        if (iobuf == NULL) {
-            goto out;
-        }
-        err = iobref_add(iobref, iobuf);
-        if (err != 0) {
-            goto out;
-        }
+	if (fop->first_rebuild) {
+            fop->first_rebuild = 0;
+	    iobref = iobref_new();
+            if (iobref == NULL) {
+                goto out;
+            }
+            iobuf = iobuf_get2(fop->xl->ctx->iobuf_pool, size);
+            if (iobuf == NULL) {
+                goto out;
+            }
+            err = iobref_add(iobref, iobuf);
+            if (err != 0) {
+                goto out;
+            }
+	    fop->iobuf = iobuf;
+	    fop->iobref = iobref;
+	}
+	else {
+	    iobuf = fop->iobuf;
+	    iobref = fop->iobref;
+	}
 
         vector[0].iov_base = iobuf->ptr;
         vector[0].iov_len = ec_method_decode(fsize, ec->fragments, values,
-                blocks, iobuf->ptr);
+                                             blocks, ((uint8_t *)iobuf->ptr) + (fop->curr_off - fop->offset - READ_PIPELINE_SIZE(fop)) * ec->fragments);
+	vector[0].iov_len = size;
 
+	if (READ_PIPELINE_END(fop)) {
 
-        iobuf_unref(iobuf);
+            iobuf_unref(iobuf);
+        }
 
         GF_FREE(buff);
         buff = NULL;
 
-        vector[0].iov_base += fop->head;
-        vector[0].iov_len -= fop->head;
+	if (READ_PIPELINE_END(fop)) {
+            vector[0].iov_base += fop->head;
+            vector[0].iov_len -= fop->head;
 
-        max = fop->offset * ec->fragments + size;
-        if (max > cbk->iatt[0].ia_size) {
-            max = cbk->iatt[0].ia_size;
-        }
-        max -= fop->offset * ec->fragments + fop->head;
-        if (max > fop->user_size) {
-            max = fop->user_size;
-        }
-        size -= fop->head;
-        if (size > max) {
-            vector[0].iov_len -= size - max;
-            size = max;
-        }
+            max = fop->offset * ec->fragments + size;
+            if (max > cbk->iatt[0].ia_size) {
+                max = cbk->iatt[0].ia_size;
+            }
+            max -= fop->offset * ec->fragments + fop->head;
+            if (max > fop->user_size) {
+                max = fop->user_size;
+            }
+            size -= fop->head;
+            if (size > max) {
+                vector[0].iov_len -= size - max;
+                size = max;
+            }
+	
 
-        cbk->op_ret = size;
-        cbk->int32 = 1;
+            cbk->op_ret = size;
+            cbk->int32 = 1;
 
-        iobref_unref(cbk->buffers);
-        cbk->buffers = iobref;
+            iobref_unref(cbk->buffers);
+            cbk->buffers = iobref;
 
-        GF_FREE(cbk->vector);
-        cbk->vector = iov_dup(vector, 1);
-        if (cbk->vector == NULL) {
-            return -ENOMEM;
-        }
+            GF_FREE(cbk->vector);
+            cbk->vector = iov_dup(vector, 1);
+            if (cbk->vector == NULL) {
+                return -ENOMEM;
+            }
+	}
     }
 
     return 0;
@@ -1270,6 +1287,7 @@ int32_t ec_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
                      int32_t count, struct iatt * stbuf,
                      struct iobref * iobref, dict_t * xdata)
 {
+    
     ec_fop_data_t * fop = NULL;
     ec_cbk_data_t * cbk = NULL;
     ec_t * ec = this->private;
@@ -1282,11 +1300,15 @@ int32_t ec_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
 
     fop = frame->local;
 
+    pthread_mutex_lock(&(fop->mutex_pipeline));
+    pthread_mutex_unlock(&(fop->mutex_pipeline));
+
     ec_trace("CBK", fop, "idx=%d, frame=%p, op_ret=%d, op_errno=%d", idx,
              frame, op_ret, op_errno);
 
     cbk = ec_cbk_data_allocate(frame, this, fop, GF_FOP_READ, idx, op_ret,
                                op_errno);
+
     if (cbk != NULL) {
         if (op_ret >= 0) {
             cbk->int32 = count;
@@ -1332,13 +1354,13 @@ int32_t ec_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
         }
 
         ec_combine(cbk, ec_combine_readv);
+
     }
 
 out:
     if (fop != NULL) {
         ec_complete(fop);
     }
-
     return 0;
 }
 
@@ -1346,9 +1368,15 @@ void ec_wind_readv(ec_t * ec, ec_fop_data_t * fop, int32_t idx)
 {
     ec_trace("WIND", fop, "idx=%d", idx);
 
+    //ec->xl_list[idx]->fops->readv(fop->frame, NULL, fop->fd, fop->size, fop->offset, fop->uint32, fop->xdata);
+
+    //STACK_WIND_COOKIE(fop->frame, ec_readv_cbk, (void *)(uintptr_t)idx,
+    //                  ec->xl_list[idx], ec->xl_list[idx]->fops->readv, fop->fd,
+    //                  fop->size, fop->offset, fop->uint32, fop->xdata);
+
     STACK_WIND_COOKIE(fop->frame, ec_readv_cbk, (void *)(uintptr_t)idx,
                       ec->xl_list[idx], ec->xl_list[idx]->fops->readv, fop->fd,
-                      fop->size, fop->offset, fop->uint32, fop->xdata);
+                      READ_PIPELINE_REAL_SIZE(fop), fop->curr_off, fop->uint32, fop->xdata);
 }
 
 int32_t ec_manager_readv(ec_fop_data_t * fop, int32_t state)
@@ -1362,6 +1390,7 @@ int32_t ec_manager_readv(ec_fop_data_t * fop, int32_t state)
             fop->head = ec_adjust_offset(fop->xl->private, &fop->offset, 1);
             fop->size = ec_adjust_size(fop->xl->private, fop->size + fop->head,
                                        1);
+	    pthread_mutex_init(&(fop->mutex_pipeline), NULL);
 
         /* Fall through */
 
@@ -1372,24 +1401,57 @@ int32_t ec_manager_readv(ec_fop_data_t * fop, int32_t state)
             return EC_STATE_DISPATCH;
 
         case EC_STATE_DISPATCH:
-            ec_dispatch_min(fop);
+
+	    //fop->my_flag = 0; //test
+	    fop->curr_off = fop->offset; //test
+	    fop->first_rebuild = 1;
+
+	    pthread_mutex_lock(&(fop->mutex_pipeline));
+
+	    if (!READ_PIPELINE_END(fop)) { //test
+            	ec_dispatch_min(fop);
+	    	fop->curr_off += READ_PIPELINE_SIZE(fop);
+	    }
+
+	    pthread_mutex_unlock(&(fop->mutex_pipeline));
 
             return EC_STATE_PREPARE_ANSWER;
 
         case EC_STATE_PREPARE_ANSWER:
+
+	    pthread_mutex_lock(&(fop->mutex_pipeline));
+
+	    
+
             cbk = ec_fop_prepare_answer(fop, _gf_true);
+
+
+	    if (!READ_PIPELINE_END(fop)) {
+		ec_dispatch_min_readv_pipeline(fop);
+	    }
+
             if (cbk != NULL) {
                 int32_t err;
-
                 ec_iatt_rebuild(fop->xl->private, cbk->iatt, 1,
                                 cbk->count);
 
                 err = ec_readv_rebuild(fop->xl->private, fop, cbk);
+
                 if (err != 0) {
                     ec_cbk_set_error(cbk, -err, _gf_true);
                 }
             }
 
+	    
+
+	    if (!READ_PIPELINE_END(fop)) {
+		ec_fop_cleanup(fop);
+		fop->curr_off += READ_PIPELINE_SIZE(fop);
+		pthread_mutex_unlock(&(fop->mutex_pipeline));
+		return EC_STATE_PREPARE_ANSWER;
+	    }
+
+	    pthread_mutex_unlock(&(fop->mutex_pipeline));
             return EC_STATE_REPORT;
 
         case EC_STATE_REPORT:
@@ -1441,6 +1503,7 @@ int32_t ec_manager_readv(ec_fop_data_t * fop, int32_t state)
             return EC_STATE_END;
     }
 }
+
 
 void ec_readv(call_frame_t * frame, xlator_t * this, uintptr_t target,
               int32_t minimum, fop_readv_cbk_t func, void * data, fd_t * fd,

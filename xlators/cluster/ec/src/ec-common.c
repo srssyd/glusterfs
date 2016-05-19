@@ -409,7 +409,6 @@ void ec_complete(ec_fop_data_t * fop)
 
 /* There could be already granted locks sitting on the bricks, unlock for which
  * must be wound at all costs*/
-
 static gf_boolean_t
 ec_must_wind (ec_fop_data_t *fop)
 {
@@ -444,6 +443,79 @@ int32_t ec_child_select(ec_fop_data_t * fop)
     int32_t first = 0, num = 0;
 
     ec_fop_cleanup(fop);
+
+    fop->mask &= ec->node_mask;
+    /* Wind the fop on same subvols as parent for any internal extra fops like
+     * head/tail read in case of writev fop. Unlocks shouldn't do this because
+     * unlock should go on all subvols where lock is performed*/
+    if (fop->parent && !ec_internal_op (fop)) {
+            fop->mask &= (fop->parent->mask & ~fop->parent->healing);
+    }
+
+    if ((fop->mask & ~ec->xl_up) != 0)
+    {
+        gf_msg (fop->xl->name, GF_LOG_WARNING, 0,
+                EC_MSG_OP_EXEC_UNAVAIL,
+                "Executing operation with "
+                "some subvolumes unavailable "
+                "(%lX)", fop->mask & ~ec->xl_up);
+
+        fop->mask &= ec->xl_up;
+    }
+
+    switch (fop->minimum)
+    {
+        case EC_MINIMUM_ALL:
+            fop->minimum = ec_bits_count(fop->mask);
+            if (fop->minimum >= ec->fragments)
+            {
+                break;
+            }
+        case EC_MINIMUM_MIN:
+            fop->minimum = ec->fragments;
+            break;
+        case EC_MINIMUM_ONE:
+            fop->minimum = 1;
+    }
+
+    if (ec->read_policy == EC_ROUND_ROBIN) {
+            first = ec->idx;
+            if (++first >= ec->nodes) {
+                first = 0;
+            }
+            ec->idx = first;
+    }
+
+    /*Unconditionally wind on healing subvolumes*/
+    fop->mask |= fop->healing;
+    fop->remaining = fop->mask;
+    fop->received = 0;
+
+    ec_trace("SELECT", fop, "");
+
+    num = ec_bits_count(fop->mask);
+    if ((num < fop->minimum) && (num < ec->fragments))
+    {
+        gf_msg (ec->xl->name, GF_LOG_ERROR, 0,
+                EC_MSG_CHILDS_INSUFFICIENT,
+                "Insufficient available childs "
+                "for this request (have %d, need "
+                "%d)", num, fop->minimum);
+
+        return 0;
+    }
+
+    ec_sleep(fop);
+
+    return 1;
+}
+
+int32_t ec_child_select_readv_pipeline(ec_fop_data_t * fop)
+{
+    ec_t * ec = fop->xl->private;
+    int32_t first = 0, num = 0;
+
+    //ec_fop_cleanup(fop);
 
     fop->mask &= ec->node_mask;
     /* Wind the fop on same subvols as parent for any internal extra fops like
@@ -891,7 +963,6 @@ void ec_dispatch_batch(ec_fop_data_t *fop)
 
 void ec_dispatch_min(ec_fop_data_t * fop)
 {
-
     ec_t * ec = fop->xl->private;
     uintptr_t mask;
     int32_t idx, count;
@@ -911,6 +982,36 @@ void ec_dispatch_min(ec_fop_data_t * fop)
         }
 
         ec_dispatch_mask(fop, mask);
+    }
+}
+
+void ec_dispatch_min_readv_pipeline(ec_fop_data_t * fop)
+{
+    ec_t * ec = fop->xl->private;
+    uintptr_t mask;
+    int32_t idx, count;
+
+
+
+    ec_dispatch_start(fop);
+
+
+    if (ec_child_select_readv_pipeline(fop))
+    {
+
+        fop->expected = count = ec->fragments;
+        fop->first = ec_select_first_by_read_policy (fop->xl->private, fop);
+        idx = fop->first - 1;
+        mask = 0;
+        while (count-- > 0)
+        {
+            idx = ec_child_next(ec, fop, idx + 1);
+            mask |= 1ULL << idx;
+        }
+
+
+        ec_dispatch_mask(fop, mask);
+
     }
 }
 
