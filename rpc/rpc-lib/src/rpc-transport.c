@@ -473,9 +473,9 @@ rpc_transport_destroy (rpc_transport_t *this)
 	pthread_mutex_destroy (&this->lock);
 
         GF_FREE (this->name);
-
-        if (this->dl_handle)
-                dlclose (this->dl_handle);
+        //There may be a thread running code after the library is closed.
+        //if (this->dl_handle);
+                //dlclose (this->dl_handle);
 
         if (this->ssl_name) {
                 GF_FREE(this->ssl_name);
