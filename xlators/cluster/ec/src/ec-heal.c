@@ -1877,12 +1877,15 @@ ec_rebuild_data (call_frame_t *frame, ec_t *ec, fd_t *fd, uint64_t size,
         syncbarrier_init (heal->data);
         pool = ec->xl->ctx->iobuf_pool;
         heal->total_size = size;
-        heal->size = iobpool_default_pagesize (pool);
+        //heal->size = iobpool_default_pagesize (pool);
+	heal->size = size;
+
         /* We need to adjust the size to a multiple of the stripe size of the
          * volume. Otherwise writes would need to fill gaps (head and/or tail)
          * with existent data from the bad bricks. This could be garbage on a
          * damaged file or it could fail if there aren't enough bricks. */
-        heal->size -= heal->size % ec->stripe_size;
+        heal->size = (heal->size % ec->stripe_size) ? ec->stripe_size * (heal->size / ec->stripe_size + 1) : heal->size;
+
         heal->bad       = ec_char_array_to_mask (healed_sinks, ec->nodes);
         heal->good      = ec_char_array_to_mask (sources, ec->nodes);
         heal->iatt.ia_type = IA_IFREG;
