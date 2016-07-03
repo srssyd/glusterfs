@@ -77,7 +77,7 @@ int32_t ec_parse_options(xlator_t * this)
         ec->node_mask = (1ULL << ec->nodes) - 1ULL;
     else
         ec->node_mask = 18446744073709551615ULL;
-    
+
     ec->fragment_size = EC_METHOD_CHUNK_SIZE;
     ec->stripe_size = ec->fragment_size * ec->fragments;
 
@@ -607,8 +607,8 @@ init (xlator_t *this)
     }
 
     GF_OPTION_INIT("coding-threads",threads,int32,failed);
-    ec_method_initialize(threads);
-    ec_thpool_init(32);
+    ec_method_initialize();
+    ec_thpool_init(4);
 
 
     GF_OPTION_INIT ("self-heal-daemon", ec->shd.enabled, bool, failed);
