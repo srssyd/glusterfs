@@ -37,11 +37,11 @@
 #define THR_PIPELINE (128 * 1024 * 1024)
 #define THR_THPOOL (1024 * 1024)
 
-void ec_method_initialize(int processor_count);
 
+void ec_method_initialize(void);
 size_t ec_method_encode(size_t size, uint32_t columns, uint32_t row,
                         uint8_t * in, uint8_t * out);
-size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
+size_t ec_method_decode(size_t size, uint32_t columns, uint8_t * rows,
                         uint8_t ** in, uint8_t * out);
 size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_row, uint8_t * rows,
                               uint8_t * in, uint8_t ** out);
