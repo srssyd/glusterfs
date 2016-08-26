@@ -687,7 +687,7 @@ void *ec_dispatch_batch_mask_single_thread(void * data){
 					fop->fd, vector, 1, (fop->offset+param->offset) / ec->fragments,
 					fop->uint32, iobref_batch[i], fop->xdata);
 
-			STACK_WIND_COOKIE(fop->frame,ec_fsync_cbk,(void *)(uintptr_t) idx,ec->xl_list[idx],ec->xl_list[idx]->fops->fsync,fop->fd,fop->int32,NULL);
+			//STACK_WIND_COOKIE(fop->frame,ec_fsync_cbk,(void *)(uintptr_t) idx,ec->xl_list[idx],ec->xl_list[idx]->fops->fsync,fop->fd,fop->int32,NULL);
 			i++;
 		}
 		idx++;
@@ -738,7 +738,7 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 
 	//Modified by syd.
 	fop->winds += 1 * count * pipe_count;
-	fop->refs += 2 * count * pipe_count;
+	fop->refs += 1 * count * pipe_count;
 
 	UNLOCK(&fop->lock);
 

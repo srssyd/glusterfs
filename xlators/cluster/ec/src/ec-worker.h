@@ -59,7 +59,6 @@ struct _workers {
     pthread_mutex_t lock;
     pthread_barrier_t barrier;
 
-    pthread_mutex_t cond_lock;
     pthread_cond_t cond;
 
     fast_sem_t job;
@@ -111,7 +110,6 @@ worker_pool_t worker_pool_init(int num_of_threads) {
     sem_init(&result->finished, 0, 0);
 
     pthread_barrier_init(&result->barrier, NULL, num_of_threads);
-
 
     for (i = 0; i < num_of_threads; i++) {
         CPU_ZERO(&cpus);

@@ -17,7 +17,6 @@ struct list_head {
 	struct list_head *prev;
 };
 
-
 #define INIT_LIST_HEAD(head) do {			\
 		(head)->next = (head)->prev = head;	\
 	} while (0)

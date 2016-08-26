@@ -141,7 +141,7 @@ size_t ec_iov_copy_to(void * dst, struct iovec * vector, int32_t count,
                 {
                     len = vector[i].iov_len - offset;
                 }
-                memcpy(dst, vector[i++].iov_base + offset, len);
+                memcpy_fast(dst, vector[i++].iov_base + offset, len);
                 offset = 0;
                 dst += len;
                 total += len;
