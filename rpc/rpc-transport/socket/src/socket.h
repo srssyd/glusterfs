@@ -35,7 +35,7 @@
 #include "globals.h"
 
 #ifndef MAX_IOVEC
-#define MAX_IOVEC 16
+#define MAX_IOVEC 8192
 #endif /* MAX_IOVEC */
 
 #define GF_DEFAULT_SOCKET_LISTEN_PORT  GF_DEFAULT_BASE_PORT

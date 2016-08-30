@@ -35,7 +35,7 @@
 #include "compat.h"
 
 #ifndef MAX_IOVEC
-#define MAX_IOVEC 16
+#define MAX_IOVEC 8192
 #endif
 
 #define RPCSVC_DEFAULT_OUTSTANDING_RPC_LIMIT 64 /* Default for protocol/server */

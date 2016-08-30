@@ -18,7 +18,7 @@
 #include "xlator.h"
 
 #ifndef MAX_IOVEC
-#define MAX_IOVEC 16
+#define MAX_IOVEC 8192
 #endif
 
 typedef struct cdc_priv {

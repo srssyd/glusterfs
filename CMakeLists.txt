@@ -5,7 +5,7 @@ project(glusterfs)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c99")
 
-
+include_directories(.)
 include_directories(api/src/)
 include_directories(cli/src/)
 include_directories(libglusterfs/src/)
@@ -13,6 +13,7 @@ include_directories(xlators/lib/src/)
 include_directories(contrib/uuid/)
 include_directories(heal/src/)
 include_directories(rpc/src/)
+include_directories(contrib/rbtree/)
 
 set(SOURCE_FILES
         api/examples/glfsxmp.c
@@ -757,6 +758,6 @@ set(SOURCE_FILES
         xlators/system/posix-acl/src/posix-acl-xattr.c
         xlators/system/posix-acl/src/posix-acl-xattr.h
         xlators/system/posix-acl/src/posix-acl.c
-        xlators/system/posix-acl/src/posix-acl.h libglusterfs/src/fast-memcpy.h)
+        xlators/system/posix-acl/src/posix-acl.h libglusterfs/src/fast-memcpy.h xlators/performance/io-batch/src/io-batch.c xlators/performance/io-batch/src/io-batch.h xlators/performance/io-batch/src/sorted-list.h xlators/performance/io-batch/src/iob-mem-types.h xlators/performance/io-batch/src/io-batch-messages.h)
 
 add_executable(glusterfs ${SOURCE_FILES})

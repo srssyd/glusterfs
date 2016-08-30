@@ -18,7 +18,7 @@
 #endif
 
 #ifndef MAX_IOVEC
-#define MAX_IOVEC 16
+#define MAX_IOVEC 8192
 #endif /* MAX_IOVEC */
 
 #include "rpc-clnt.h"
