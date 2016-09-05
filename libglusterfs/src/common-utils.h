@@ -464,7 +464,7 @@ iov_unload (char *buf, const struct iovec *vector, int count)
 	int copied = 0;
 
 	for (i = 0; i < count; i++) {
-		memcpy_fast (buf + copied, vector[i].iov_base, vector[i].iov_len);
+		memcpy (buf + copied, vector[i].iov_base, vector[i].iov_len);
 		copied += vector[i].iov_len;
 	}
 }
@@ -481,7 +481,7 @@ iov_load (const struct iovec *vector, int count, char *buf, int size)
 	while (left && i < count) {
 		cp = min (vector[i].iov_len, left);
 		if (vector[i].iov_base != buf + (size - left))
-			memcpy_fast (vector[i].iov_base, buf + (size - left), cp);
+			memcpy (vector[i].iov_base, buf + (size - left), cp);
 		ret += cp;
 		left -= cp;
 		if (left)
@@ -507,7 +507,7 @@ iov_copy (const struct iovec *dst, int dcnt,
 
 	while (left) {
 		min_i = min (dst[d_i].iov_len - d_ii, src[s_i].iov_len - s_ii);
-		memcpy_fast (dst[d_i].iov_base + d_ii, src[s_i].iov_base + s_ii,
+		memcpy (dst[d_i].iov_base + d_ii, src[s_i].iov_base + s_ii,
 			min_i);
 
 		d_ii += min_i;

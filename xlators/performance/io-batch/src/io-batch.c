@@ -16,7 +16,6 @@ typedef struct iob_conf{
     uint64_t total_batch_size;
     //Flushed after certain time out in milliseconds;
     uint32_t flush_time_out;
-
 }iob_conf_t;
 
 typedef struct iob_buffer{
@@ -28,7 +27,7 @@ typedef struct iob_buffer{
 
 }iob_buffer_t;
 
-typedef struct ibo_buffer_inode{
+typedef struct iob_buffer_inode{
     struct rb_table *vectors;
     uint64_t buffered_size;
 }iob_buffer_inode_t;
@@ -147,28 +146,34 @@ static void iob_flush_buffer(call_frame_t *frame, xlator_t *this, fd_t *fd,iob_b
 
         struct iovec *vector_batched = GF_CALLOC(vector_cnt,sizeof(struct iovec),gf_common_mt_iovec);
         struct iobref *iobref = iobref_new();
-        //iobref_ref(iobref);
 
-        iob_interval_t *intervals[vector_cnt];
+        iob_interval_t **intervals = malloc(sizeof(iob_interval_t *)*vector_cnt);
 
         i=0,cnt=0;
         while(interval_begin != interval_end){
             for(j=0;j<interval_begin->count;j++) {
                 vector_batched[i++] = interval_begin->iov[j];
             }
+
             ret = iobref_merge(iobref,interval_begin->iobref);
+            iobref_unref(interval_begin->iobref);
+
             assert(ret >= 0);
             intervals[cnt++] = interval_begin;
             interval_begin = rb_t_next(&begin_traveser);
         }
 
-        for(i=0;i<cnt;i++)
-            rb_delete(vectors,intervals[i]);
+
+        for(i=0;i<cnt;i++) {
+            rb_delete(vectors, intervals[i]);
+            GF_FREE(intervals[i]);
+        }
+
 
         bg_frame = copy_frame(frame);
         assert(bg_frame != NULL);
         //cbk is not used now, however, this is incorrect. We should use the state of the cbk to decide whether to throw the data or keep retrying or return failure.
-        STACK_WIND_COOKIE (bg_frame,iob_writev_cbk,fd,
+        STACK_WIND_COOKIE (bg_frame,iob_writev_cbk,iobref,
                     FIRST_CHILD (this), FIRST_CHILD (this)->fops->writev,
                     fd, vector_batched, vector_cnt, begin_off, 0, iobref, NULL);
 
@@ -192,15 +197,17 @@ static size_t insert_vector(call_frame_t *frame, xlator_t *this, fd_t *fd,iob_bu
     int i;
     struct rb_traverser traverser;
 
+
+
     interval->iov = iov_dup(vector,count);
     interval->count = count;
     interval->off = offset;
 
+    for(i=0;i<count;i++)
+        iobuf_ref(iobref->iobrefs[i]);
 
     iobref_ref(iobref);
 
-    for(i=0;i<count;i++)
-        iobuf_ref(iobref->iobrefs[i]);
 
     interval->iobref = iobref;
     interval->length = iov_length(vector,count);
@@ -268,6 +275,22 @@ iob_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
     //            FIRST_CHILD(this)->fops->flush, (fd_t *)cookie, xdata);
     //STACK_UNWIND_STRICT(flush,frame,op_ret,op_errno,xdata);
     //STACK_DESTROY(frame->root);
+
+    struct iobref * bref = cookie;
+    int i;
+
+    if(bref) {
+        for (i = 0; i < bref->alloced; i++) {
+            struct iobuf *buf = bref->iobrefs[i];
+            if (!buf)
+                break;
+            iobuf_unref(buf);
+        }
+        iobref_unref(bref);
+    }
+
+    if(frame && frame->root)
+        STACK_DESTROY(frame->root);
 
     return 0;
 }
@@ -366,5 +389,6 @@ struct xlator_fops fops = {
 
 
 struct xlator_cbks cbks = {
+
 };
 
