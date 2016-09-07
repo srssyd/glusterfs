@@ -12,6 +12,8 @@ enum gf_iob_mem_types_ {
     gf_iob_mt_conf,
     gf_iob_mt_buffer_file,
     gf_iob_mt_interval,
+    gf_iob_mt_frame,
+    gf_iob_mt_shared,
     gf_iob_mt_end
 };
 
