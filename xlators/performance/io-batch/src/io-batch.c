@@ -53,11 +53,10 @@ rb_find_max(const struct rb_table *tree, const void *item) {
 
     for (p = tree->rb_root; p != NULL;) {
         int cmp = tree->rb_compare(item, p->rb_data, tree->rb_param);
-
         if (cmp < 0)
             p = p->rb_link[0];
         else if (cmp > 0)
-            p = p->rb_link[1], result = p->rb_data;
+            result = p->rb_data,p = p->rb_link[1];
         else /* |cmp == 0| */
             return p->rb_data;
     }
@@ -98,7 +97,6 @@ static int iob_flush_buffer(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_b
     end_traverser = begin_traveser;
 
 
-
     while (interval_begin) {
         pre_off = interval_begin->off;
         begin_off = pre_off;
@@ -136,6 +134,8 @@ static int iob_flush_buffer(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_b
             rb_delete(vectors, intervals[i]);
             GF_FREE(intervals[i]);
         }
+
+        free(intervals);
 
 
         bg_frame = copy_frame(frame);
@@ -178,7 +178,7 @@ insert_vector(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_buffer_inode_t 
     struct rb_table *vectors = inode_buffer->vectors;
     iob_interval_t *interval = GF_CALLOC(1, sizeof(iob_interval_t), gf_iob_mt_interval);
 
-    iob_interval_t *last_interval;
+    iob_interval_t *last_interval,*next_interval;
     iob_conf_t *conf = &(((iob_buffer_t *) (this->private))->conf);
     int i;
     struct rb_traverser traverser;
@@ -199,7 +199,7 @@ insert_vector(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_buffer_inode_t 
 
 
     LOCK(&inode_buffer->lock);
-    last_interval = rb_find_max(vectors, vector);
+    last_interval = rb_find_max(vectors, interval);
 
     //If any intervals interleaved, flush the file.
     if (last_interval != NULL) {
@@ -208,14 +208,20 @@ insert_vector(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_buffer_inode_t 
 
         //TODO:judge whether there is a buffer behind this buffer.
         //FIXME: Bug exists here.
-/*
-        rb_t_find(&traverser,vectors,last_interval);
 
-        if((last_interval=rb_t_next(&traverser))!=NULL){
-            if(last_interval->off < offset + interval->length)
-                iob_flush_buffer(frame,this,fd,inode_buffer);
+        rb_t_find(&traverser,vectors,last_interval);
+        assert(traverser.rb_node != NULL);
+
+
+        next_interval = rb_t_next(&traverser);
+
+        assert(next_interval != last_interval);
+
+        if(next_interval != NULL){
+            if(next_interval->off < offset + interval->length)
+                iob_flush_buffer(frame,this,fd,inode_buffer,GF_FOP_WRITE);
         }
-*/
+
     }
 
     rb_insert(vectors, interval);
@@ -262,7 +268,7 @@ iob_writev_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
     struct iobref *bref = NULL;
     iob_shared_t *shared;
     int i;
-    gf_boolean_t finished;
+    gf_boolean_t finished = _gf_false;
     call_frame_t *cbk_frame;
 
     if (!iob_frame)
@@ -309,11 +315,13 @@ iob_writev_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
         finished = _gf_true;
     }
 
+    UNLOCK(&shared->mutex);
+
     assert(frame->root != NULL);
     STACK_DESTROY(frame->root);
 
 
-    UNLOCK(&shared->mutex);
+
 
     //There will be only one outstanding thread with ref 0 because of the lock above.
     if (finished)
