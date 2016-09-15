@@ -9,6 +9,16 @@
 #include "io-batch.h"
 #include "iob-mem-types.h"
 
+/*
+ * TODO: 1.flush all data if the total memory consumed reach a certain threshold.
+ * TODO: 2.flush data periodically.
+ * TODO: 3.passing this xlator for O_DSYNC,O_SYNC flag.
+ * TODO: 4.handle xdata.
+ * TODO: 5.handle truncate,fsync,stat.
+ * TODO: 6:handle readv.
+ * TODO: 7:control the vector count.
+ * TODO: 8:allow read and write pipeline.
+ */
 
 int
 iob_buffer_vector_comparator(void *entry1, void *entry2, void *param) {
@@ -41,6 +51,7 @@ init(xlator_t *this) {
     LOCK_INIT(&buffer->lock);
 
     this->private = buffer;
+    return 0;
 }
 
 /* Search |tree| for an item matching |item|, and return it if found.
@@ -67,99 +78,141 @@ rb_find_max(const struct rb_table *tree, const void *item) {
 
 void
 fini(xlator_t *this) {
-
-
     out:
     return;
+}
+
+int get_total_inode_buffer_continuous_intervals(iob_buffer_inode_t *inode_buffer){
+    struct rb_table *vectors = inode_buffer->vectors;
+    iob_interval_t *interval_begin,*interval_end;
+    struct rb_traverser traverser;
+    off_t pre_off, begin_off;
+    size_t pre_size;
+    int result = 0;
+
+
+    interval_begin = rb_t_first(&traverser, vectors);
+
+    while (interval_begin) {
+
+        while(interval_begin && interval_begin->status == BUFFERED){
+            interval_begin = rb_t_next(&traverser);
+        }
+        if(interval_begin) {
+            pre_off = interval_begin->off;
+            pre_size = interval_begin->length;
+            interval_end = rb_t_next(&traverser);
+            result++;
+            while (interval_end && interval_end->status!=BUFFERED && interval_end->off == pre_off + pre_size) {
+                pre_off = interval_end->off;
+                pre_size = interval_end->length;
+                interval_end = rb_t_next(&traverser);
+            }
+            interval_begin = interval_end;
+        }
+    }
+
+    return result;
 }
 
 //Not thread safe.
 static int iob_flush_buffer(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_buffer_inode_t *inode_buffer,glusterfs_fop_t fop) {
     struct rb_table *vectors = inode_buffer->vectors;
     struct rb_traverser begin_traveser, end_traverser;
-    iob_interval_t *interval_begin;
-    iob_interval_t *interval_end;
+    iob_interval_t *interval_begin,*interval_end,*tmp_interval;
     call_frame_t *bg_frame;
     off_t pre_off, begin_off;
     size_t pre_size;
-    uint32_t vector_cnt;
+    int vector_cnt;
     int32_t ret;
     int i, j, cnt;
-    iob_frame_t *iob_frame;
+    iob_write_frame_t *iob_frame;
     iob_shared_t *shared = GF_CALLOC(1, sizeof(iob_shared_t), gf_iob_mt_shared);
-    LOCK_INIT(&shared->mutex);
+    int total = 0;
+    iob_buffer_t * buffers = this->private;
+
+    LOCK_INIT(&shared->lock);
     shared->ref = 0;
     shared->op_ret = 0;
     shared->op_errno = 0;
-    int total = 0;
 
     interval_begin = rb_t_first(&begin_traveser, vectors);
     end_traverser = begin_traveser;
 
+    total = get_total_inode_buffer_continuous_intervals(inode_buffer);
+
+    LOCK(&shared->lock);
+    shared->ref = shared->ref + total;
+    UNLOCK(&shared->lock);
+
 
     while (interval_begin) {
-        pre_off = interval_begin->off;
-        begin_off = pre_off;
-        pre_size = interval_begin->length;
-        vector_cnt = interval_begin->count;
-        interval_end = rb_t_next(&end_traverser);
-        while (interval_end && interval_end->off == pre_off + pre_size) {
-            pre_off = interval_end->off;
-            pre_size = interval_end->length;
-            vector_cnt += interval_end->count;
-            interval_end = rb_t_next(&end_traverser);
+        while(interval_begin && interval_begin->status == BUFFERED){
+            tmp_interval = rb_t_next(&begin_traveser);
+            rb_delete(vectors,interval_begin);
+            GF_FREE(interval_begin);
+            interval_begin = tmp_interval;
         }
+        if(interval_begin) {
+            pre_off = interval_begin->off;
+            begin_off = pre_off;
+            pre_size = interval_begin->length;
+            vector_cnt = interval_begin->count;
+            interval_end = rb_t_next(&end_traverser);
 
-        struct iovec *vector_batched = GF_CALLOC(vector_cnt, sizeof(struct iovec), gf_common_mt_iovec);
-        struct iobref *iobref = iobref_new();
-
-        iob_interval_t **intervals = malloc(sizeof(iob_interval_t *) * vector_cnt);
-
-        i = 0, cnt = 0;
-        while (interval_begin != interval_end) {
-            for (j = 0; j < interval_begin->count; j++) {
-                vector_batched[i++] = interval_begin->iov[j];
+            while (interval_end && interval_end->status != BUFFERED && interval_end->off == pre_off + pre_size) {
+                pre_off = interval_end->off;
+                pre_size = interval_end->length;
+                vector_cnt += interval_end->count;
+                interval_end = rb_t_next(&end_traverser);
             }
 
-            ret = iobref_merge(iobref, interval_begin->iobref);
-            iobref_unref(interval_begin->iobref);
+            struct iovec *vector_batched = GF_CALLOC(vector_cnt, sizeof(struct iovec), gf_common_mt_iovec);
+            struct iobref *iobref = iobref_new();
 
-            assert(ret >= 0);
-            intervals[cnt++] = interval_begin;
-            interval_begin = rb_t_next(&begin_traveser);
+            iob_interval_t **intervals = malloc(sizeof(iob_interval_t *) * vector_cnt);
+
+            i = 0, cnt = 0;
+            while (interval_begin != interval_end) {
+                for (j = 0; j < interval_begin->count; j++) {
+                    vector_batched[i++] = interval_begin->iov[j];
+                }
+
+                //There should not be too much vectors merged.
+                ret = iobref_merge(iobref, interval_begin->iobref);
+                iobref_unref(interval_begin->iobref);
+
+                assert(ret >= 0);
+                intervals[cnt++] = interval_begin;
+                interval_begin = rb_t_next(&begin_traveser);
+            }
+
+
+            for (i = 0; i < cnt; i++) {
+                rb_delete(vectors, intervals[i]);
+                GF_FREE(intervals[i]);
+            }
+
+            free(intervals);
+
+
+            bg_frame = copy_frame(frame);
+            assert(bg_frame != NULL);
+
+            iob_frame = GF_CALLOC(1, sizeof(iob_write_frame_t), gf_iob_mt_write_frame);
+            iob_frame->iobref = iobref;
+            iob_frame->frame = frame;
+            iob_frame->fd = fd;
+            iob_frame->shared = shared;
+            iob_frame->fop = fop;
+            iob_frame->xdata = NULL;
+
+
+            STACK_WIND_COOKIE (bg_frame, iob_writev_cbk, iob_frame,
+                               FIRST_CHILD(this), FIRST_CHILD(this)->fops->writev,
+                               fd, vector_batched, vector_cnt, begin_off, 0, iobref, NULL);
         }
 
-
-        for (i = 0; i < cnt; i++) {
-            rb_delete(vectors, intervals[i]);
-            GF_FREE(intervals[i]);
-        }
-
-        free(intervals);
-
-
-        bg_frame = copy_frame(frame);
-        assert(bg_frame != NULL);
-
-        iob_frame = GF_CALLOC(1, sizeof(iob_frame_t), gf_iob_mt_frame);
-        iob_frame->iobref = iobref;
-        iob_frame->frame = frame;
-        iob_frame->fd = fd;
-        iob_frame->shared = shared;
-        iob_frame->fop = fop;
-        iob_frame->xdata = NULL;
-
-        LOCK(&shared->mutex);
-        shared->ref = shared->ref + 1;
-        UNLOCK(&shared->mutex);
-
-        total++;
-        //TODO: stack wind after the ref should be at the right position.
-        STACK_WIND_COOKIE (bg_frame, iob_writev_cbk, iob_frame,
-                           FIRST_CHILD(this), FIRST_CHILD(this)->fops->writev,
-                           fd, vector_batched, vector_cnt, begin_off, 0, iobref, NULL);
-
-        end_traverser = begin_traveser;
     }
 
     assert(rb_count(vectors) == 0);
@@ -170,11 +223,14 @@ static int iob_flush_buffer(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_b
 
 //TODO: Handle different flag.
 //TODO: Save the xdata.
-static size_t
+
+//Not thread safely.
+static void
 insert_vector(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_buffer_inode_t *inode_buffer, off_t offset,
-              struct iovec *vector, uint32_t count, struct iobref *iobref) {
+              struct iovec *vector, uint32_t count, struct iobref *iobref,iob_interval_status_t status) {
     if (count <= 0)
-        return 0;
+        return ;
+
     struct rb_table *vectors = inode_buffer->vectors;
     iob_interval_t *interval = GF_CALLOC(1, sizeof(iob_interval_t), gf_iob_mt_interval);
 
@@ -196,45 +252,119 @@ insert_vector(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_buffer_inode_t 
 
     interval->iobref = iobref;
     interval->length = iov_length(vector, count);
+    interval->status = status;
 
 
-    LOCK(&inode_buffer->lock);
-    last_interval = rb_find_max(vectors, interval);
 
-    //If any intervals interleaved, flush the file.
-    if (last_interval != NULL) {
-        if (last_interval->off + last_interval->length > offset)
-            iob_flush_buffer(frame, this, fd, inode_buffer,GF_FOP_WRITE);
+        last_interval = rb_find_max(vectors, interval);
 
-        //TODO:judge whether there is a buffer behind this buffer.
-        //FIXME: Bug exists here.
-
-        rb_t_find(&traverser,vectors,last_interval);
-        assert(traverser.rb_node != NULL);
+        //If any intervals interleaved, flush the file.
+        if (last_interval != NULL) {
+            if (last_interval->off + last_interval->length > offset)
+                iob_flush_buffer(frame, this, fd, inode_buffer, GF_FOP_WRITE);
 
 
-        next_interval = rb_t_next(&traverser);
+            rb_t_find(&traverser, vectors, last_interval);
+            //assert(traverser.rb_node != NULL);
 
-        assert(next_interval != last_interval);
 
-        if(next_interval != NULL){
-            if(next_interval->off < offset + interval->length)
-                iob_flush_buffer(frame,this,fd,inode_buffer,GF_FOP_WRITE);
+            next_interval = rb_t_next(&traverser);
+
+            assert(next_interval != last_interval);
+
+            if (next_interval != NULL) {
+                if (next_interval->off < offset + interval->length)
+                    iob_flush_buffer(frame, this, fd, inode_buffer, GF_FOP_WRITE);
+            }
+
         }
 
-    }
+        //if(status == WRITTEN)
+        inode_buffer->buffered_size += interval->length;
 
-    rb_insert(vectors, interval);
+        if (inode_buffer->buffered_size >= conf->batch_size)
+            iob_flush_buffer(frame, this, fd, inode_buffer, GF_FOP_WRITE);
 
-    inode_buffer->buffered_size += interval->length;
+        rb_insert(vectors, interval);
 
-    if (inode_buffer->buffered_size >= conf->batch_size)
-        iob_flush_buffer(frame, this, fd, inode_buffer,GF_FOP_WRITE);
-
-    UNLOCK(&inode_buffer->lock);
 
 
 }
+
+void get_next_prefetch_size(off_t offset,size_t size,off_t *new_off,size_t *new_size){
+    *new_off = offset;
+    *new_size = min(128 * 1u<<20,size * 2);
+}
+
+static void read_vector(call_frame_t *frame, xlator_t *this, iob_buffer_inode_t *inode_buffer,fd_t *fd, size_t size,
+                        off_t offset, uint32_t flags, dict_t *xdata){
+
+
+    iob_interval_t * interval,current;
+    iob_read_status_t status;
+    iob_read_frame_t    *read_frame;
+
+    read_frame = GF_CALLOC(1,sizeof(iob_read_frame_t),gf_iob_mt_read_frame);
+    assert(read_frame != NULL);
+
+    current.off = offset;
+    current.length = size;
+    assert(inode_buffer != NULL);
+    pthread_mutex_lock(&inode_buffer->mutex);
+    {
+        interval = rb_find_max(inode_buffer->vectors,&current);
+        if(interval){
+            if(interval->off + interval->length < offset){
+                //Simple read.
+                status = SIMPLE;
+            }else if(interval->off + interval->length > offset){
+                if(interval->off + interval->length >= offset + size){
+                    //What we need read is already in cache.Read from buffer directly.
+                    status = CACHED;
+                }else{
+                    //The data we need is in buffer partially,some is not.
+                    status = PARTIAL;
+                }
+            }else{
+                //Try to prefetch the next interval.
+                status = PREFETCH;
+            }
+        }else{
+            //Simple read.
+            status = SIMPLE;
+        }
+
+        read_frame->status = status;
+        read_frame->frame = frame;
+        read_frame->lock = &(inode_buffer->mutex);
+        read_frame->size = size;
+        read_frame->offset = offset;
+        read_frame->inode_buffer = inode_buffer;
+
+        if(status == SIMPLE){
+            STACK_WIND_COOKIE(frame,iob_readv_cbk,read_frame,FIRST_CHILD(this),FIRST_CHILD(this)->fops->readv,fd,size,offset,flags,xdata);
+        }else if(status == CACHED) {
+            iob_readv_cbk(frame,read_frame,FIRST_CHILD(this),size,0,NULL,0,NULL,NULL,NULL);
+
+        }else if(status == PREFETCH){
+            off_t new_off;
+            size_t new_size;
+            get_next_prefetch_size(interval->off,interval->length,&new_off,&new_size);
+            new_size = max(new_size,size);
+            STACK_WIND_COOKIE(frame,iob_readv_cbk,read_frame,FIRST_CHILD(this),FIRST_CHILD(this)->fops->readv,fd,new_size,new_off,flags,xdata);
+
+        }else if(status == PARTIAL){
+            //Not into consider now.
+            assert(0);
+        }
+
+
+    }
+    //Lock should be unlocked in the callback procedure to prevent from unexpected failure.
+
+
+}
+
 
 int
 mem_acct_init(xlator_t *this) {
@@ -258,13 +388,97 @@ mem_acct_init(xlator_t *this) {
 }
 
 
+
+int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
+                     int32_t op_ret, int32_t op_errno, struct iovec * vector,
+                     int32_t count, struct iatt * stbuf,
+                     struct iobref * iobref, dict_t * xdata){
+
+    iob_read_frame_t *read_frame = cookie;
+    iob_interval_t  *interval,current;
+    struct iatt buf;
+    if(read_frame->status == CACHED){
+
+        //Data should have been cached.
+        struct iobref  *bref;
+        struct iobuf   * buf;
+        struct iovec   * vec;
+        bref = iobref_new();
+        buf = iobuf_get2(this->ctx->iobuf_pool,read_frame->size);
+        iobref_add(bref,buf);
+        vec = GF_CALLOC(1,sizeof(struct iovec),gf_common_mt_iovec);
+
+        vec->iov_base = buf->ptr;
+        vec->iov_len = read_frame->size;
+
+        current.off = read_frame->offset;
+        current.length = read_frame->size;
+
+        assert(read_frame->inode_buffer != NULL);
+
+        interval = rb_find_max(read_frame->inode_buffer->vectors,&current);
+
+        assert(interval->off <= current.off);
+        assert(interval->off + interval->length >= current.off + current.length);
+
+        memcpy(buf->ptr,interval->iobref->iobrefs[0]->ptr + (current.off - interval->off),read_frame->size);
+        pthread_mutex_unlock(read_frame->lock);
+        STACK_UNWIND_STRICT(readv,frame,op_ret,op_errno,vec,1,&buf,bref,xdata);
+
+    }else if(read_frame->status == SIMPLE || read_frame->status == PREFETCH){
+        if(op_ret >=0){
+
+            //The block to be read is larger than the file size.
+
+                insert_vector(frame,this,NULL,read_frame->inode_buffer,read_frame->offset,vector,count,iobref,BUFFERED);
+
+                struct iobref  *bref;
+                struct iobuf   * buf;
+                struct iovec   * vec;
+                bref = iobref_new();
+                buf = iobuf_get2(this->ctx->iobuf_pool,read_frame->size);
+                iobref_add(bref,buf);
+                vec = GF_CALLOC(1,sizeof(struct iovec),gf_common_mt_iovec);
+
+                vec->iov_base = buf->ptr;
+                vec->iov_len = min(op_ret,read_frame->size);
+
+                current.off = read_frame->offset;
+                current.length = vec->iov_len;
+
+                assert(read_frame->inode_buffer != NULL);
+
+                interval = rb_find_max(read_frame->inode_buffer->vectors,&current);
+
+                assert(interval != NULL);
+                assert(interval->off <= current.off);
+                assert(interval->off + interval->length >= current.off + current.length);
+
+                memcpy(buf->ptr,interval->iobref->iobrefs[0]->ptr + (current.off - interval->off),vec->iov_len);
+                pthread_mutex_unlock(read_frame->lock);
+                STACK_UNWIND_STRICT(readv,frame,op_ret,op_errno,vec,1,stbuf,bref,xdata);
+
+
+
+        }else{
+            STACK_UNWIND_STRICT(readv,frame,op_ret,op_errno,vector,count,stbuf,iobref,xdata);
+        }
+    }else if(read_frame->status == PARTIAL){
+        assert(0);
+    }
+
+
+}
+
+
+
 int
 iob_writev_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
                int32_t op_ret, int32_t op_errno,
                struct iatt *prebuf, struct iatt *postbuf, dict_t *xdata) {
 
 
-    iob_frame_t *iob_frame = cookie;
+    iob_write_frame_t *iob_frame = cookie;
     struct iobref *bref = NULL;
     iob_shared_t *shared;
     int i;
@@ -293,13 +507,13 @@ iob_writev_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
 
 
     if (op_ret < 0) {
-        LOCK(&shared->mutex);
+        LOCK(&shared->lock);
         shared->op_ret = op_ret;
         shared->op_errno = op_errno;
-        UNLOCK(&shared->mutex);
+        UNLOCK(&shared->lock);
     }
 
-    LOCK(&shared->mutex);
+    LOCK(&shared->lock);
 
     if (--shared->ref == 0) {
 
@@ -315,7 +529,7 @@ iob_writev_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
         finished = _gf_true;
     }
 
-    UNLOCK(&shared->mutex);
+    UNLOCK(&shared->lock);
 
     assert(frame->root != NULL);
     STACK_DESTROY(frame->root);
@@ -364,15 +578,19 @@ iob_writev(call_frame_t *frame, xlator_t *this, fd_t *fd, struct iovec *vector,
         //File found. Insert the iovec into file buffer.
         inode_buffer = (iob_buffer_inode_t *) (data->data);
         UNLOCK(&buffer->lock);
-        op_ret = insert_vector(frame, this, fd, inode_buffer, offset, vector, count, iobref);
+        pthread_mutex_lock(&inode_buffer->mutex);
+        insert_vector(frame, this, fd, inode_buffer, offset, vector, count, iobref,WRITTEN);
+        pthread_mutex_unlock(&inode_buffer->mutex);
     } else {
         inode_buffer = GF_CALLOC(1, sizeof(iob_buffer_inode_t), gf_iob_mt_buffer_file);
         inode_buffer->buffered_size = 0;
         inode_buffer->vectors = rb_create((rb_comparison_func *) iob_buffer_vector_comparator, NULL, NULL);
-        LOCK_INIT(&inode_buffer->lock);
+        pthread_mutex_init(&inode_buffer->mutex,NULL);
         dict_add(buffer->buffer_dic, gfid, data_from_ptr(inode_buffer));
         UNLOCK(&buffer->lock);
-        op_ret = insert_vector(frame, this, fd, inode_buffer, offset, vector, count, iobref);
+        pthread_mutex_lock(&inode_buffer->mutex);
+        insert_vector(frame, this, fd, inode_buffer, offset, vector, count, iobref,WRITTEN);
+        pthread_mutex_unlock(&inode_buffer->mutex);
 
     }
 
@@ -408,15 +626,19 @@ iob_flush(call_frame_t *frame, xlator_t *this, fd_t *fd, dict_t *xdata) {
     gfid = uuid_utoa(fd->inode->gfid);
 
 
-
+    //Do not need lock because lock is inside the dict.
     data = dict_get(buffer->buffer_dic, gfid);
 
     if (data != NULL) {
         //File found. Insert the iovec into file buffer.
         inode_buffer = (iob_buffer_inode_t *) (data->data);
-        LOCK(&inode_buffer->lock);
-        total = iob_flush_buffer(frame, this, fd, inode_buffer,GF_FOP_FLUSH);
-        UNLOCK(&inode_buffer->lock);
+
+        pthread_mutex_lock(&inode_buffer->mutex);
+        {
+            total = iob_flush_buffer(frame, this, fd, inode_buffer, GF_FOP_FLUSH);
+        }
+        pthread_mutex_unlock(&inode_buffer->mutex);
+
         if (!total) {
             //No buffer,fall through.
             STACK_WIND (frame, default_flush_cbk, FIRST_CHILD(this),
@@ -439,10 +661,44 @@ iob_flush(call_frame_t *frame, xlator_t *this, fd_t *fd, dict_t *xdata) {
     return 0;
 }
 
+int
+iob_readv (call_frame_t *frame, xlator_t *this, fd_t *fd, size_t size,
+          off_t offset, uint32_t flags, dict_t *xdata){
+    iob_buffer_t * buffer = this->private;
+    char         * gfid  = NULL;
+    data_t       * data  = NULL;
+    iob_buffer_inode_t *inode_buffer = NULL;
+    if(!fd || !fd->inode || !fd->inode->gfid)
+        goto out;
+
+    gfid = uuid_utoa(fd->inode->gfid);
+
+    LOCK(&buffer->lock);
+    data = dict_get(buffer->buffer_dic, gfid);
+
+    if(data != NULL){
+        inode_buffer = (iob_buffer_inode_t *)data->data;
+        UNLOCK(&buffer->lock);
+        read_vector(frame,this,inode_buffer,fd,size,offset,flags,xdata);
+
+    }else{
+        inode_buffer = GF_CALLOC(1, sizeof(iob_buffer_inode_t), gf_iob_mt_buffer_file);
+        inode_buffer->buffered_size = 0;
+        inode_buffer->vectors = rb_create((rb_comparison_func *) iob_buffer_vector_comparator, NULL, NULL);
+        pthread_mutex_init(&inode_buffer->mutex,NULL);
+        dict_add(buffer->buffer_dic, gfid, data_from_ptr(inode_buffer));
+        UNLOCK(&buffer->lock);
+        read_vector(frame,this,inode_buffer,fd,size,offset,flags,xdata);
+    }
+    out:
+        return 0;
+
+}
 
 struct xlator_fops fops = {
         .writev      = iob_writev,
-        .flush       = iob_flush
+        .flush       = iob_flush,
+        .readv       = iob_readv
 };
 
 
