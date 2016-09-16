@@ -18,6 +18,7 @@
  * TODO: 6:handle readv.
  * TODO: 7:control the vector count.
  * TODO: 8:allow read and write pipeline.
+ * TODO: 9:the performance of iobref_merge is extremely slow, so there should not be too much vectors in one iobref.
  */
 
 int
@@ -150,6 +151,15 @@ static int iob_flush_buffer(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_b
         while(interval_begin && interval_begin->status == BUFFERED){
             tmp_interval = rb_t_next(&begin_traveser);
             rb_delete(vectors,interval_begin);
+
+            for(i=0;i <interval_begin->iobref->alloced;i++) {
+                if(!interval_begin->iobref->iobrefs[i])
+                    break;
+                iobuf_unref(interval_begin->iobref->iobrefs[i]);
+            }
+
+            iobref_unref(interval_begin->iobref);
+
             GF_FREE(interval_begin);
             interval_begin = tmp_interval;
         }
@@ -292,7 +302,7 @@ insert_vector(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_buffer_inode_t 
 }
 
 void get_next_prefetch_size(off_t offset,size_t size,off_t *new_off,size_t *new_size){
-    *new_off = offset;
+    //*new_off = offset;
     *new_size = min(128 * 1u<<20,size * 2);
 }
 
@@ -323,6 +333,8 @@ static void read_vector(call_frame_t *frame, xlator_t *this, iob_buffer_inode_t 
                     status = CACHED;
                 }else{
                     //The data we need is in buffer partially,some is not.
+                    //Two possibilities.
+                    //Data read partially,or the end of the file has been reached.
                     status = PARTIAL;
                 }
             }else{
@@ -347,15 +359,17 @@ static void read_vector(call_frame_t *frame, xlator_t *this, iob_buffer_inode_t 
             iob_readv_cbk(frame,read_frame,FIRST_CHILD(this),size,0,NULL,0,NULL,NULL,NULL);
 
         }else if(status == PREFETCH){
-            off_t new_off;
+            off_t new_off = offset;
             size_t new_size;
             get_next_prefetch_size(interval->off,interval->length,&new_off,&new_size);
             new_size = max(new_size,size);
             STACK_WIND_COOKIE(frame,iob_readv_cbk,read_frame,FIRST_CHILD(this),FIRST_CHILD(this)->fops->readv,fd,new_size,new_off,flags,xdata);
 
         }else if(status == PARTIAL){
-            //Not into consider now.
-            assert(0);
+            //Flush to reduce complexity. Should be improved.
+            iob_flush_buffer(frame,this,fd,inode_buffer,GF_FOP_WRITE);
+            read_frame->status = SIMPLE;
+            STACK_WIND_COOKIE(frame,iob_readv_cbk,read_frame,FIRST_CHILD(this),FIRST_CHILD(this)->fops->readv,fd,size,offset,flags,xdata);
         }
 
 
@@ -435,13 +449,14 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
                 struct iobref  *bref;
                 struct iobuf   * buf;
                 struct iovec   * vec;
+                size_t      new_size = min(op_ret,read_frame->size);
                 bref = iobref_new();
-                buf = iobuf_get2(this->ctx->iobuf_pool,read_frame->size);
+                buf = iobuf_get2(this->ctx->iobuf_pool,new_size);
                 iobref_add(bref,buf);
                 vec = GF_CALLOC(1,sizeof(struct iovec),gf_common_mt_iovec);
 
                 vec->iov_base = buf->ptr;
-                vec->iov_len = min(op_ret,read_frame->size);
+                vec->iov_len = new_size;
 
                 current.off = read_frame->offset;
                 current.length = vec->iov_len;
@@ -461,9 +476,11 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
 
 
         }else{
+            pthread_mutex_unlock(read_frame->lock);
             STACK_UNWIND_STRICT(readv,frame,op_ret,op_errno,vector,count,stbuf,iobref,xdata);
         }
     }else if(read_frame->status == PARTIAL){
+        //Not possible now.
         assert(0);
     }
 
