@@ -15,10 +15,10 @@
  * TODO: 3.passing this xlator for O_DSYNC,O_SYNC flag.
  * TODO: 4.handle xdata.
  * TODO: 5.handle truncate,fsync,stat.
- * TODO: 6:handle readv.
- * TODO: 7:control the vector count.
- * TODO: 8:allow read and write pipeline.
- * TODO: 9:the performance of iobref_merge is extremely slow, so there should not be too much vectors in one iobref.
+ * TODO: 6:control the vector count.
+ * TODO: 7:allow read and write pipeline.
+ * TODO: 8:the performance of iobref_merge is extremely slow, so there should not be too much vectors in one iobref.
+ * TODO: 9:
  */
 
 int
@@ -152,6 +152,8 @@ static int iob_flush_buffer(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_b
             tmp_interval = rb_t_next(&begin_traveser);
             rb_delete(vectors,interval_begin);
 
+
+            //Memory leak exists here. The memory is not freed completely.
             for(i=0;i <interval_begin->iobref->alloced;i++) {
                 if(!interval_begin->iobref->iobrefs[i])
                     break;
@@ -290,15 +292,14 @@ insert_vector(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_buffer_inode_t 
         }
 
         //if(status == WRITTEN)
-        inode_buffer->buffered_size += interval->length;
+
 
         if (inode_buffer->buffered_size >= conf->batch_size)
             iob_flush_buffer(frame, this, fd, inode_buffer, GF_FOP_WRITE);
 
+        inode_buffer->buffered_size += interval->length;
+
         rb_insert(vectors, interval);
-
-
-
 }
 
 void get_next_prefetch_size(off_t offset,size_t size,off_t *new_off,size_t *new_size){
@@ -309,6 +310,7 @@ void get_next_prefetch_size(off_t offset,size_t size,off_t *new_off,size_t *new_
 static void read_vector(call_frame_t *frame, xlator_t *this, iob_buffer_inode_t *inode_buffer,fd_t *fd, size_t size,
                         off_t offset, uint32_t flags, dict_t *xdata){
 
+    printf("Request off:%u size:%u\n",offset,size);
 
     iob_interval_t * interval,current;
     iob_read_status_t status;
@@ -354,6 +356,7 @@ static void read_vector(call_frame_t *frame, xlator_t *this, iob_buffer_inode_t 
         read_frame->inode_buffer = inode_buffer;
 
         if(status == SIMPLE){
+            printf("SIMPLE off:%u size:%u\n",offset,size);
             STACK_WIND_COOKIE(frame,iob_readv_cbk,read_frame,FIRST_CHILD(this),FIRST_CHILD(this)->fops->readv,fd,size,offset,flags,xdata);
         }else if(status == CACHED) {
             iob_readv_cbk(frame,read_frame,FIRST_CHILD(this),size,0,NULL,0,NULL,NULL,NULL);
@@ -363,10 +366,12 @@ static void read_vector(call_frame_t *frame, xlator_t *this, iob_buffer_inode_t 
             size_t new_size;
             get_next_prefetch_size(interval->off,interval->length,&new_off,&new_size);
             new_size = max(new_size,size);
+            printf("PREFETCH off:%u size:%u\n",new_off,new_size);
             STACK_WIND_COOKIE(frame,iob_readv_cbk,read_frame,FIRST_CHILD(this),FIRST_CHILD(this)->fops->readv,fd,new_size,new_off,flags,xdata);
 
         }else if(status == PARTIAL){
             //Flush to reduce complexity. Should be improved.
+            printf("PARTIAL off:%u size:%u\n",offset,size);
             iob_flush_buffer(frame,this,fd,inode_buffer,GF_FOP_WRITE);
             read_frame->status = SIMPLE;
             STACK_WIND_COOKIE(frame,iob_readv_cbk,read_frame,FIRST_CHILD(this),FIRST_CHILD(this)->fops->readv,fd,size,offset,flags,xdata);
@@ -442,8 +447,8 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
     }else if(read_frame->status == SIMPLE || read_frame->status == PREFETCH){
         if(op_ret >=0){
 
-            //The block to be read is larger than the file size.
-
+                //The block to be read is larger than the file size.
+                //FIXME: fd should not be null, or data in the buffer will be lost.
                 insert_vector(frame,this,NULL,read_frame->inode_buffer,read_frame->offset,vector,count,iobref,BUFFERED);
 
                 struct iobref  *bref;
@@ -471,7 +476,7 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
 
                 memcpy(buf->ptr,interval->iobref->iobrefs[0]->ptr + (current.off - interval->off),vec->iov_len);
                 pthread_mutex_unlock(read_frame->lock);
-                STACK_UNWIND_STRICT(readv,frame,op_ret,op_errno,vec,1,stbuf,bref,xdata);
+                STACK_UNWIND_STRICT(readv,frame,new_size,op_errno,vec,1,stbuf,bref,xdata);
 
 
 
