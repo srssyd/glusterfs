@@ -844,7 +844,7 @@ int iob_ftruncate(call_frame_t *frame, xlator_t *this, fd_t *fd,
         inode_buffer = (iob_buffer_inode_t *)data->data;
         iob_buffer_truncate(this,inode_buffer,offset);
     }
-    STACK_WIND(frame,default_truncate_cbk,FIRST_CHILD(this),FIRST_CHILD(this)->fops->truncate,fd,offset,xdata);
+    STACK_WIND(frame,default_truncate_cbk,FIRST_CHILD(this),FIRST_CHILD(this)->fops->ftruncate,fd,offset,xdata);
     return 0;
 
 }
