@@ -127,7 +127,7 @@ struct ec_encode_batch_param{
     size_t size;
     uint32_t columns, total_rows, off;
     uint8_t * in;
-    uint8_t * rows;
+    uint32_t * rows;
     uint8_t ** out;
 };
 typedef struct ec_encode_batch_param ec_encode_batch_param_t;
@@ -141,7 +141,7 @@ static void ec_method_batch_single_encode(void * param)
     uint32_t off = ec_param->off;
     uint8_t *in = ec_param->in,*in_ptr=NULL;
     uint8_t **out = ec_param->out;
-    uint8_t *rows = ec_param->rows;
+    uint32_t *rows = ec_param->rows;
 
     for(j = 0;j < size; j++){
         for (row = 0;row < total_row;row++){
@@ -157,7 +157,7 @@ static void ec_method_batch_single_encode(void * param)
         in += EC_METHOD_CHUNK_SIZE * columns;
     }
 }
-size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_row, uint8_t * rows,
+size_t ec_method_batch_encode(size_t size, uint32_t columns, uint32_t total_row, uint32_t * rows,
                               uint8_t * in, uint8_t ** out)
 {
     uint32_t i, j,off;
@@ -239,14 +239,14 @@ typedef struct _inv_cache{
     uint8_t ** inv;
     uint8_t * dummy;
     uint32_t columns;
-    uint8_t *rows;
+    uint32_t *rows;
 }inv_cache_t;
 
 static inv_cache_t cache;
 static char cache_inited = 0;
 
 
-size_t ec_method_decode(size_t size, uint32_t columns, uint8_t * rows,
+size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
                         uint8_t ** in, uint8_t * out)
 {
     uint32_t i, j, k, off, last, value;
@@ -274,7 +274,7 @@ size_t ec_method_decode(size_t size, uint32_t columns, uint8_t * rows,
         //Use some tricks to allocate 2-d array which is cache-friendly.
         inv = (uint8_t **) malloc(sizeof(uint8_t *) * EC_METHOD_MAX_FRAGMENTS);
         mtx = (uint8_t **) malloc(sizeof(uint8_t *) * EC_METHOD_MAX_FRAGMENTS);
-        dummy = malloc(EC_METHOD_CHUNK_SIZE * sizeof(uint8_t));
+        posix_memalign(&dummy,32,EC_METHOD_CHUNK_SIZE * sizeof(uint8_t));
 
         inv[0] = (uint8_t *) malloc((EC_METHOD_MAX_FRAGMENTS + 1) * EC_METHOD_MAX_FRAGMENTS * sizeof(uint8_t));
         mtx[0] = (uint8_t *) malloc(EC_METHOD_MAX_FRAGMENTS * EC_METHOD_MAX_FRAGMENTS * sizeof(uint8_t));
@@ -335,9 +335,6 @@ size_t ec_method_decode(size_t size, uint32_t columns, uint8_t * rows,
 
     ec_decode_param_t *params = malloc(sizeof(ec_decode_param_t)*worker_pool->num_of_threads);
 
-
-
-
     int processor_count = worker_pool->num_of_threads;
 
     off = 0;
@@ -348,6 +345,7 @@ size_t ec_method_decode(size_t size, uint32_t columns, uint8_t * rows,
             .off = off,
             .dummy = dummy,
             .inv = inv,
+                    //FIXME: in may not be aligned to 256bit(32 bytes)
             .in = in,
             .out = out
         };

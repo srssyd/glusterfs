@@ -715,7 +715,7 @@ void ec_dispatch_batch_mask(ec_fop_data_t * fop, uintptr_t mask)
 	struct iobref ** iobref_batch = malloc(sizeof(struct iobref*) *count * pipe_count);
 	struct iobuf ** iobuf_batch = malloc(sizeof(struct iobuf*) *count *pipe_count);
 	uint8_t ** out_ptr = malloc(sizeof(uint8_t *) *count *pipe_count);
-    uint8_t * rows = malloc(sizeof(uint8_t) * count);
+    uint32_t * rows = malloc(sizeof(uint32_t) * count);
 
 
 	int32_t ec_writev_cbk (call_frame_t *frame, void *cookie, xlator_t *this,

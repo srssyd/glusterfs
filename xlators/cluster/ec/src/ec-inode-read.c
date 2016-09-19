@@ -1164,7 +1164,8 @@ int32_t ec_readv_rebuild(ec_t * ec, ec_fop_data_t * fop, ec_cbk_data_t * cbk)
         fsize = cbk->op_ret;
         size = fop->size * ec->fragments;
 
-        buff = GF_MALLOC(size, gf_common_mt_char);
+        //TODO: should use faster memory allocation.
+        posix_memalign(&buff,32,size);
 
         if (buff == NULL) {
             goto out;
@@ -1209,7 +1210,7 @@ int32_t ec_readv_rebuild(ec_t * ec, ec_fop_data_t * fop, ec_cbk_data_t * cbk)
             iobuf_unref(iobuf);
         }
 
-        GF_FREE(buff);
+        free(buff);
         buff = NULL;
 
 	if (READ_PIPELINE_END(fop)) {
@@ -1254,7 +1255,7 @@ out:
     if (iobref != NULL) {
         iobref_unref(iobref);
     }
-    GF_FREE(buff);
+    free(buff);
 
     return err;
 }
