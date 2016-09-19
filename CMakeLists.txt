@@ -758,6 +758,6 @@ set(SOURCE_FILES
         xlators/system/posix-acl/src/posix-acl-xattr.c
         xlators/system/posix-acl/src/posix-acl-xattr.h
         xlators/system/posix-acl/src/posix-acl.c
-        xlators/system/posix-acl/src/posix-acl.h libglusterfs/src/fast-memcpy.h xlators/performance/io-batch/src/io-batch.c xlators/performance/io-batch/src/io-batch.h xlators/performance/io-batch/src/iob-mem-types.h xlators/performance/io-batch/src/io-batch-messages.h)
+        xlators/system/posix-acl/src/posix-acl.h libglusterfs/src/fast-memcpy.h xlators/performance/io-batch/src/io-batch.c xlators/performance/io-batch/src/io-batch.h xlators/performance/io-batch/src/iob-mem-types.h xlators/performance/io-batch/src/io-batch-messages.h libglusterfs/src/fast-memcpy.c)
 
 add_executable(glusterfs ${SOURCE_FILES})

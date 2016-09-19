@@ -9,16 +9,18 @@
 #include "io-batch.h"
 #include "iob-mem-types.h"
 
+
+/* Currently, md-cache should not be used together with io-batch */
+
 /*
  * TODO: 1.flush all data if the total memory consumed reach a certain threshold.
  * TODO: 2.flush data periodically.
  * TODO: 3.passing this xlator for O_DSYNC,O_SYNC flag.
  * TODO: 4.handle xdata.
  * TODO: 5.handle truncate,fsync,stat.
- * TODO: 6:control the vector count.
- * TODO: 7:allow read and write pipeline.
+ * TODO: 6:control the vector count for write.
+ * TODO: 7:allow read and write at the same time(should be applied after fixing the performance of readv with small bs).
  * TODO: 8:the performance of iobref_merge is extremely slow, so there should not be too much vectors in one iobref.
- * TODO: 9:
  */
 
 int
@@ -310,7 +312,7 @@ void get_next_prefetch_size(off_t offset,size_t size,off_t *new_off,size_t *new_
 static void read_vector(call_frame_t *frame, xlator_t *this, iob_buffer_inode_t *inode_buffer,fd_t *fd, size_t size,
                         off_t offset, uint32_t flags, dict_t *xdata){
 
-    printf("Request off:%u size:%u\n",offset,size);
+    //printf("Request off:%u size:%u\n",offset,size);
 
     iob_interval_t * interval,current;
     iob_read_status_t status;
@@ -419,15 +421,12 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
     if(read_frame->status == CACHED){
 
         //Data should have been cached.
-        struct iobref  *bref;
-        struct iobuf   * buf;
+
         struct iovec   * vec;
-        bref = iobref_new();
-        buf = iobuf_get2(this->ctx->iobuf_pool,read_frame->size);
-        iobref_add(bref,buf);
+
         vec = GF_CALLOC(1,sizeof(struct iovec),gf_common_mt_iovec);
 
-        vec->iov_base = buf->ptr;
+
         vec->iov_len = read_frame->size;
 
         current.off = read_frame->offset;
@@ -440,9 +439,9 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
         assert(interval->off <= current.off);
         assert(interval->off + interval->length >= current.off + current.length);
 
-        memcpy(buf->ptr,interval->iobref->iobrefs[0]->ptr + (current.off - interval->off),read_frame->size);
+        vec->iov_base = interval->iobref->iobrefs[0]->ptr + (current.off - interval->off);
         pthread_mutex_unlock(read_frame->lock);
-        STACK_UNWIND_STRICT(readv,frame,op_ret,op_errno,vec,1,&buf,bref,xdata);
+        STACK_UNWIND_STRICT(readv,frame,op_ret,op_errno,vec,1,&buf,iobref,xdata);
 
     }else if(read_frame->status == SIMPLE || read_frame->status == PREFETCH){
         if(op_ret >=0){
@@ -477,8 +476,6 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
                 memcpy(buf->ptr,interval->iobref->iobrefs[0]->ptr + (current.off - interval->off),vec->iov_len);
                 pthread_mutex_unlock(read_frame->lock);
                 STACK_UNWIND_STRICT(readv,frame,new_size,op_errno,vec,1,stbuf,bref,xdata);
-
-
 
         }else{
             pthread_mutex_unlock(read_frame->lock);
@@ -555,9 +552,6 @@ iob_writev_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
 
     assert(frame->root != NULL);
     STACK_DESTROY(frame->root);
-
-
-
 
     //There will be only one outstanding thread with ref 0 because of the lock above.
     if (finished)

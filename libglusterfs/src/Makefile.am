@@ -23,7 +23,7 @@ libglusterfs_la_SOURCES = dict.c xlator.c logging.c \
 	$(CONTRIBDIR)/rbtree/rb.c rbthash.c store.c latency.c \
 	graph.c syncop.c graph-print.c trie.c run.c options.c fd-lk.c \
 	circ-buff.c event-history.c gidcache.c ctx.c client_t.c event-poll.c \
-	event-epoll.c syncop-utils.c cluster-syncop.c refcount.c \
+	event-epoll.c syncop-utils.c cluster-syncop.c refcount.c fast-memcpy.c\
 	$(CONTRIBDIR)/libgen/basename_r.c \
 	$(CONTRIBDIR)/libgen/dirname_r.c $(CONTRIBDIR)/stdlib/gf_mkostemp.c \
 	strfd.c parse-utils.c $(CONTRIBDIR)/mount/mntent.c \
@@ -47,7 +47,7 @@ noinst_HEADERS = common-utils.h defaults.h dict.h glusterfs.h hashfn.h timespec.
 	template-component-messages.h strfd.h syncop-utils.h parse-utils.h \
 	ctr-messages.h libglusterfs-messages.h \
 	$(CONTRIBDIR)/mount/mntent_compat.h lvm-defaults.h \
-	$(CONTRIBDIR)/libexecinfo/execinfo_compat.h \
+	$(CONTRIBDIR)/libexecinfo/execinfo_compat.h fast-memcpy.h\
 	unittest/unittest.h quota-common-utils.h rot-buffs.h \
 	$(CONTRIBDIR)/timer-wheel/timer-wheel.h compat-uuid.h \
 	upcall-utils.h tw.h
