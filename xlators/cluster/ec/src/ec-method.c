@@ -235,16 +235,6 @@ static void ec_method_single_decode(void *param)
 }
 
 
-typedef struct _inv_cache{
-    uint8_t ** inv;
-    uint8_t * dummy;
-    uint32_t columns;
-    uint32_t *rows;
-}inv_cache_t;
-
-static inv_cache_t cache;
-static char cache_inited = 0;
-
 
 size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
                         uint8_t ** in, uint8_t * out)
@@ -257,20 +247,13 @@ size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
     uint8_t **mtx;
     uint8_t *dummy;
 
-    if(!cache_inited)
-        cached = 0;
-    else if(cache.columns == columns){
-        for(i=0;i<columns;i++)
-            if(rows[i] != cache.rows[i]) {
-                cached = 0;
-                break;
-            }
-    }else
-        cached = 0;
+
+
+    //FIXME: bug exists for cache. currently
 
     size /= EC_METHOD_CHUNK_SIZE;
 
-    if(!cached) {
+
         //Use some tricks to allocate 2-d array which is cache-friendly.
         inv = (uint8_t **) malloc(sizeof(uint8_t *) * EC_METHOD_MAX_FRAGMENTS);
         mtx = (uint8_t **) malloc(sizeof(uint8_t *) * EC_METHOD_MAX_FRAGMENTS);
@@ -318,20 +301,7 @@ size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
                 }
             }
         }
-        if(cache_inited) {
-            free(cache.inv[0]);
-            free(cache.inv);
-            free(cache.dummy);
-        }
-        cache.inv = inv;
-        cache.dummy = dummy;
-        cache.rows = rows;
-        cache.columns = columns;
-        cache_inited = 1;
-    }else{
-        inv = cache.inv;
-        dummy = cache.dummy;
-    }
+
 
     ec_decode_param_t *params = malloc(sizeof(ec_decode_param_t)*worker_pool->num_of_threads);
 
@@ -345,7 +315,6 @@ size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
             .off = off,
             .dummy = dummy,
             .inv = inv,
-                    //FIXME: in may not be aligned to 256bit(32 bytes)
             .in = in,
             .out = out
         };
@@ -357,14 +326,11 @@ size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
 
     worker_pool_run(worker_pool,&ec_method_single_decode,(void *)params,sizeof(ec_decode_param_t));
 
-    //free(threads);
     free(params);
-    //free(dummy);
-    //free(inv[0]);
-    if(!cached){
-        free(mtx[0]);
-        free(mtx);
-    }
+    free(dummy);
+    free(inv[0]);
+    free(mtx[0]);
+    free(mtx);
 
 
     return size * EC_METHOD_CHUNK_SIZE * columns;
