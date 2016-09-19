@@ -19,7 +19,7 @@
  * TODO: 4.handle xdata.
  * TODO: 5.handle truncate,fsync,stat.
  * TODO: 6:control the vector count for write.
- * TODO: 7:allow read and write at the same time(should be applied after fixing the performance of readv with small bs).
+ * TODO: 7:allow read and write at the same time.(How to implement?)
  * TODO: 8:the performance of iobref_merge is extremely slow, so there should not be too much vectors in one iobref.
  */
 
@@ -190,6 +190,7 @@ static int iob_flush_buffer(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_b
             while (interval_begin != interval_end) {
                 for (j = 0; j < interval_begin->count; j++) {
                     vector_batched[i++] = interval_begin->iov[j];
+                    GF_FREE(&interval_begin->iov[j]);
                 }
 
                 //There should not be too much vectors merged.
@@ -255,6 +256,7 @@ insert_vector(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_buffer_inode_t 
 
 
     interval->iov = iov_dup(vector, count);
+
     interval->count = count;
     interval->off = offset;
 
@@ -268,7 +270,7 @@ insert_vector(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_buffer_inode_t 
     interval->length = iov_length(vector, count);
     interval->status = status;
 
-
+    //GF_FREE(vector);
 
         last_interval = rb_find_max(vectors, interval);
 
@@ -711,10 +713,148 @@ iob_readv (call_frame_t *frame, xlator_t *this, fd_t *fd, size_t size,
 
 }
 
+void clear_interval(iob_interval_t *interval){
+    int i;
+    assert(interval != NULL);
+    for(i=0;i <interval->iobref->alloced;i++) {
+        if(!interval->iobref->iobrefs[i])
+            break;
+        iobuf_unref(interval->iobref->iobrefs[i]);
+    }
+
+    iobref_unref(interval->iobref);
+
+    GF_FREE(interval->iov);
+
+    GF_FREE(interval);
+}
+
+static int iob_buffer_truncate(xlator_t *this,iob_buffer_inode_t *inode_buffer,off_t offset){
+    iob_interval_t *interval,tmp,*start = NULL;
+    struct rb_traverser traverser;
+
+    int i;
+    tmp.off = offset;
+
+    pthread_mutex_lock(&inode_buffer->mutex);
+    {
+        interval = rb_find_max(inode_buffer->vectors, &tmp);
+
+        if (interval != NULL) {
+            assert(interval->off <= offset);
+            if (interval->off + interval->length <= offset) {
+                if (interval->status == WRITTEN) {
+                    //Two options left here.
+                    //It is suggested to cut the interval.
+                    struct iobref *iobref = iobref_new();
+                    struct iobuf *iobuf = iobuf_get2(this->ctx->iobuf_pool,offset - interval->off);
+                    struct iovec *iovec = GF_CALLOC(1,sizeof(iovec),gf_common_mt_iovec);
+
+                    size_t current = 0;
+                    iob_interval_t * new_interval = GF_CALLOC(1,sizeof(iob_interval_t),gf_iob_mt_interval);
+
+                    new_interval->off = interval->off;
+                    new_interval->count = 1;
+                    new_interval->length = offset - interval->off;
+                    new_interval->iobref = iobref;
+                    new_interval->status = WRITTEN;
+
+                    iovec->iov_base = iobuf->ptr;
+                    iovec->iov_len = new_interval->length;
+
+                    for(i = 0;i<interval->count;i++) {
+                        size_t size = min(offset - interval->off - current,interval->iov[i].iov_len);
+                        if(size <= 0)
+                            break;
+                        memcpy(iobuf->ptr + current, interval->iobref->iobrefs[i]->ptr, size);
+                        current += size;
+
+                    }
+
+                    rb_delete(inode_buffer->vectors,interval);
+
+                    clear_interval(interval);
+
+                    rb_insert(inode_buffer->vectors,new_interval);
+
+                    rb_t_find(&traverser, inode_buffer->vectors, new_interval);
+                    start = rb_t_next(&traverser);
+
+
+                } else if (interval->status == BUFFERED) {
+
+                    rb_t_find(&traverser, inode_buffer->vectors, interval);
+                    start = rb_t_next(&traverser);
+                    rb_delete(inode_buffer->vectors,interval);
+                    clear_interval(interval);
+                }
+            } else {
+                rb_t_find(&traverser, inode_buffer->vectors, interval);
+                start = rb_t_next(&traverser);
+            }
+        } else {
+            start = rb_t_first(&traverser,inode_buffer->vectors);
+        }
+
+        while(start != NULL){
+            interval = rb_t_next(&traverser);
+            rb_delete(inode_buffer->vectors,start);
+            inode_buffer->buffered_size -= start->length;
+            clear_interval(start);
+            start = interval;
+        }
+
+
+    }
+    pthread_mutex_unlock(&inode_buffer->mutex);
+
+}
+
+int iob_truncate(call_frame_t *frame,
+                 xlator_t *this,
+                 loc_t *loc,
+                 off_t offset, dict_t *xdata){
+    iob_buffer_t * buffer = this->private;
+    char        * gfid = NULL;
+    data_t      * data = NULL;
+    iob_buffer_inode_t *inode_buffer = NULL;
+
+    gfid = uuid_utoa(loc->gfid);
+
+    data = dict_get(buffer->buffer_dic,gfid);
+    if(data !=NULL){
+        inode_buffer = (iob_buffer_inode_t *)data->data;
+        iob_buffer_truncate(this,inode_buffer,offset);
+    }
+    STACK_WIND(frame,default_truncate_cbk,FIRST_CHILD(this),FIRST_CHILD(this)->fops->truncate,loc,offset,xdata);
+    return 0;
+}
+
+int iob_ftruncate(call_frame_t *frame, xlator_t *this, fd_t *fd,
+                  off_t offset, dict_t *xdata){
+    iob_buffer_t * buffer = this->private;
+    char        * gfid = NULL;
+    data_t      * data = NULL;
+    iob_buffer_inode_t *inode_buffer = NULL;
+
+    gfid = uuid_utoa(fd->inode->gfid);
+
+    data = dict_get(buffer->buffer_dic,gfid);
+    if(data !=NULL){
+        inode_buffer = (iob_buffer_inode_t *)data->data;
+        iob_buffer_truncate(this,inode_buffer,offset);
+    }
+    STACK_WIND(frame,default_truncate_cbk,FIRST_CHILD(this),FIRST_CHILD(this)->fops->truncate,fd,offset,xdata);
+    return 0;
+
+}
+
 struct xlator_fops fops = {
         .writev      = iob_writev,
         .flush       = iob_flush,
-        .readv       = iob_readv
+        .readv       = iob_readv,
+        .truncate    = iob_truncate,
+        .ftruncate   = iob_ftruncate
 };
 
 
