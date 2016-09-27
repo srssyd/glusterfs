@@ -17,10 +17,12 @@
  * TODO: 2.flush data periodically.
  * TODO: 3.passing this xlator for O_DSYNC,O_SYNC flag.
  * TODO: 4.handle xdata.
- * TODO: 5.handle truncate,fsync,stat.
+ * TODO: 5.handle fsync,stat.
  * TODO: 6:control the vector count for write.
  * TODO: 7:allow read and write at the same time.(How to implement?)
  * TODO: 8:the performance of iobref_merge is extremely slow, so there should not be too much vectors in one iobref.
+ * TODO: 9:write may not see the most recent read.
+ * TODO: 10:bug exists when trying to read and flush at the same time(We need to make sure the operation of remove from buffer and write to the disk is atomic).
  */
 
 int
@@ -172,6 +174,7 @@ static int iob_flush_buffer(call_frame_t *frame, xlator_t *this, fd_t *fd, iob_b
             begin_off = pre_off;
             pre_size = interval_begin->length;
             vector_cnt = interval_begin->count;
+            end_traverser = begin_traveser;
             interval_end = rb_t_next(&end_traverser);
 
             while (interval_end && interval_end->status != BUFFERED && interval_end->off == pre_off + pre_size) {
@@ -341,6 +344,7 @@ static void read_vector(call_frame_t *frame, xlator_t *this, iob_buffer_inode_t 
                     //The data we need is in buffer partially,some is not.
                     //Two possibilities.
                     //Data read partially,or the end of the file has been reached.
+                    //Performance will be improved by fixing this.
                     status = PARTIAL;
                 }
             }else{
@@ -375,9 +379,11 @@ static void read_vector(call_frame_t *frame, xlator_t *this, iob_buffer_inode_t 
 
         }else if(status == PARTIAL){
             //Flush to reduce complexity. Should be improved.
+
             printf("PARTIAL off:%u size:%u\n",offset,size);
             iob_flush_buffer(frame,this,fd,inode_buffer,GF_FOP_WRITE);
             read_frame->status = SIMPLE;
+            //FIXME: data may not have been flushed yet.
             STACK_WIND_COOKIE(frame,iob_readv_cbk,read_frame,FIRST_CHILD(this),FIRST_CHILD(this)->fops->readv,fd,size,offset,flags,xdata);
         }
 
@@ -423,6 +429,7 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
     if(read_frame->status == CACHED){
 
         //Data should have been cached.
+        printf("Cached off:%u size:%u op_ret:%d\n",read_frame->offset,read_frame->size,op_ret);
 
         struct iovec   * vec;
 
@@ -441,12 +448,17 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
         assert(interval->off <= current.off);
         assert(interval->off + interval->length >= current.off + current.length);
 
-        vec->iov_base = interval->iobref->iobrefs[0]->ptr + (current.off - interval->off);
-        pthread_mutex_unlock(read_frame->lock);
+
+        vec->iov_base = interval->iov[0].iov_base + (current.off - interval->off);
+
         STACK_UNWIND_STRICT(readv,frame,op_ret,op_errno,vec,1,&buf,iobref,xdata);
+        //To prevent from interval is released during the process when interval is unwinded.
+        pthread_mutex_unlock(read_frame->lock);
 
     }else if(read_frame->status == SIMPLE || read_frame->status == PREFETCH){
         if(op_ret >=0){
+
+                //printf("Simple or Prefetch off:%u size:%u op_ret:%d\n",read_frame->offset,read_frame->size,op_ret);
 
                 //The block to be read is larger than the file size.
                 //FIXME: fd should not be null, or data in the buffer will be lost.
@@ -475,7 +487,8 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
                 assert(interval->off <= current.off);
                 assert(interval->off + interval->length >= current.off + current.length);
 
-                memcpy(buf->ptr,interval->iobref->iobrefs[0]->ptr + (current.off - interval->off),vec->iov_len);
+
+                memcpy(buf->ptr,interval->iov[0].iov_base + (current.off - interval->off),vec->iov_len);
                 pthread_mutex_unlock(read_frame->lock);
                 STACK_UNWIND_STRICT(readv,frame,new_size,op_errno,vec,1,stbuf,bref,xdata);
 
@@ -662,7 +675,7 @@ iob_flush(call_frame_t *frame, xlator_t *this, fd_t *fd, dict_t *xdata) {
             STACK_WIND (frame, default_flush_cbk, FIRST_CHILD(this),
                         FIRST_CHILD(this)->fops->flush, fd, xdata);
         }else{
-
+            //Flushed after all buffers are written.
         }
 
     } else {
@@ -803,8 +816,6 @@ static int iob_buffer_truncate(xlator_t *this,iob_buffer_inode_t *inode_buffer,o
             clear_interval(start);
             start = interval;
         }
-
-
     }
     pthread_mutex_unlock(&inode_buffer->mutex);
 
@@ -844,7 +855,7 @@ int iob_ftruncate(call_frame_t *frame, xlator_t *this, fd_t *fd,
         inode_buffer = (iob_buffer_inode_t *)data->data;
         iob_buffer_truncate(this,inode_buffer,offset);
     }
-    STACK_WIND(frame,default_truncate_cbk,FIRST_CHILD(this),FIRST_CHILD(this)->fops->ftruncate,fd,offset,xdata);
+    STACK_WIND(frame,default_ftruncate_cbk,FIRST_CHILD(this),FIRST_CHILD(this)->fops->ftruncate,fd,offset,xdata);
     return 0;
 
 }
