@@ -1647,7 +1647,7 @@ struct volopt_map_entry glusterd_volopt_map[] = {
         { .key         = "performance.write-behind",
           .voltype     = "performance/write-behind",
           .option      = "!perf",
-          .value       = "on",
+          .value       = "off",
           .op_version  = 1,
           .description = "enable/disable write-behind translator in the "
                          "volume.",
@@ -1656,7 +1656,7 @@ struct volopt_map_entry glusterd_volopt_map[] = {
         { .key         = "performance.read-ahead",
           .voltype     = "performance/read-ahead",
           .option      = "!perf",
-          .value       = "on",
+          .value       = "off",
           .op_version  = 1,
           .description = "enable/disable read-ahead translator in the volume.",
           .flags       = OPT_FLAG_CLIENT_OPT | OPT_FLAG_XLATOR_OPT
@@ -1664,7 +1664,7 @@ struct volopt_map_entry glusterd_volopt_map[] = {
         { .key         = "performance.readdir-ahead",
           .voltype     = "performance/readdir-ahead",
           .option      = "!perf",
-          .value       = "off",
+          .value       = "on",
           .op_version  = 3,
           .description = "enable/disable readdir-ahead translator in the volume.",
           .flags       = OPT_FLAG_CLIENT_OPT | OPT_FLAG_XLATOR_OPT
@@ -1673,7 +1673,7 @@ struct volopt_map_entry glusterd_volopt_map[] = {
         { .key         = "performance.io-cache",
           .voltype     = "performance/io-cache",
           .option      = "!perf",
-          .value       = "on",
+          .value       = "off",
           .op_version  = 1,
           .description = "enable/disable io-cache translator in the volume.",
           .flags       = OPT_FLAG_CLIENT_OPT
@@ -1681,7 +1681,7 @@ struct volopt_map_entry glusterd_volopt_map[] = {
         { .key         = "performance.quick-read",
           .voltype     = "performance/quick-read",
           .option      = "!perf",
-          .value       = "on",
+          .value       = "off",
           .op_version  = 1,
           .description = "enable/disable quick-read translator in the volume.",
           .flags       = OPT_FLAG_CLIENT_OPT | OPT_FLAG_XLATOR_OPT
@@ -1705,6 +1705,15 @@ struct volopt_map_entry glusterd_volopt_map[] = {
                          "volume.",
           .flags       = OPT_FLAG_CLIENT_OPT | OPT_FLAG_XLATOR_OPT
         },
+        { .key         = "performance.io-batch",
+                .voltype     = "performance/io-batch",
+                .option      = "!perf",
+                .value       = "on",
+                .op_version  = 1,
+                .description = "enable/disable io-batch translator in the "
+                        "volume.",
+                .flags       = OPT_FLAG_CLIENT_OPT | OPT_FLAG_XLATOR_OPT
+        },
         { .key         = "performance.client-io-threads",
           .voltype     = "performance/io-threads",
           .option      = "!perf",
@@ -1717,7 +1726,7 @@ struct volopt_map_entry glusterd_volopt_map[] = {
         { .key         = "performance.nfs.write-behind",
           .voltype     = "performance/write-behind",
           .option      = "!nfsperf",
-          .value       = "on",
+          .value       = "off",
           .op_version  = 1,
           .description = "enable/disable write-behind translator in the volume",
           .flags       = OPT_FLAG_XLATOR_OPT
@@ -1762,12 +1771,22 @@ struct volopt_map_entry glusterd_volopt_map[] = {
           .op_version = 1,
           .flags      = OPT_FLAG_XLATOR_OPT
         },
+        { .key         = "performance.nfs.io-batch",
+                .voltype     = "performance/io-batch",
+                .option      = "!nfsperf",
+                .value       = "on",
+                .op_version  = 1,
+                .description = "enable/disable io-batch translator in the "
+                        "volume.",
+                .flags       = OPT_FLAG_CLIENT_OPT | OPT_FLAG_XLATOR_OPT
+        },
         { .key        = "performance.force-readdirp",
           .voltype    = "performance/md-cache",
           .option     = "force-readdirp",
           .op_version = 2,
           .flags      = OPT_FLAG_CLIENT_OPT
         },
+
 
 	/* Feature translators */
         { .key         = "features.file-snapshot",

@@ -23,7 +23,9 @@
  * TODO: 8:the performance of iobref_merge is extremely slow, so there should not be too much vectors in one iobref.
  * TODO: 9:write may not see the most recent read.
  * TODO: 10:bug exists when trying to read and flush at the same time(We need to make sure the operation of remove from buffer and write to the disk is atomic).
+ * TODO: 11:support concurrent read for a single file.
  */
+
 
 int
 iob_buffer_vector_comparator(void *entry1, void *entry2, void *param) {
@@ -38,7 +40,6 @@ iob_buffer_vector_comparator(void *entry1, void *entry2, void *param) {
     return vec1->off < vec2->off ? -1 : 1;
 
 }
-
 int32_t
 init(xlator_t *this) {
     iob_conf_t conf;
@@ -362,6 +363,7 @@ static void read_vector(call_frame_t *frame, xlator_t *this, iob_buffer_inode_t 
         read_frame->size = size;
         read_frame->offset = offset;
         read_frame->inode_buffer = inode_buffer;
+        read_frame->fd = fd;
 
         if(status == SIMPLE){
             printf("SIMPLE off:%u size:%u\n",offset,size);
@@ -461,8 +463,8 @@ int iob_readv_cbk(call_frame_t * frame, void * cookie, xlator_t * this,
                 //printf("Simple or Prefetch off:%u size:%u op_ret:%d\n",read_frame->offset,read_frame->size,op_ret);
 
                 //The block to be read is larger than the file size.
-                //FIXME: fd should not be null, or data in the buffer will be lost.
-                insert_vector(frame,this,NULL,read_frame->inode_buffer,read_frame->offset,vector,count,iobref,BUFFERED);
+
+                insert_vector(frame,this,read_frame->fd,read_frame->inode_buffer,read_frame->offset,vector,count,iobref,BUFFERED);
 
                 struct iobref  *bref;
                 struct iobuf   * buf;

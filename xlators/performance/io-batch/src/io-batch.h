@@ -82,6 +82,8 @@ typedef struct iob_read_frame{
     iob_buffer_inode_t  *inode_buffer;
     size_t              size;
     off_t               offset;
+
+    fd_t                *fd;
 }iob_read_frame_t;
 
 
