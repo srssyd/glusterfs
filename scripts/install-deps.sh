@@ -1,4 +1,4 @@
-su root
+yum makecache
 
 echo 'Begin to install epel.'
 
@@ -10,7 +10,7 @@ if [[ $? -ne 0 ]]; then
 fi
 
 echo 'Begin to switch mirror.'
-cp ./epel.repo /etc/yum.repos.d/epel.repo
+cp ./scripts/epel.repo /etc/yum.repos.d/epel.repo
 echo 'Swith completed.'
 
 echo 'Begin to install dependency.'
