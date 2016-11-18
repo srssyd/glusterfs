@@ -5,122 +5,236 @@ stages:
 
 variables:
     INSTALL_DEP_SCRIPT: "echo 'hpcgrid3102' | su root -c ./srcipts/install-deps.sh"
+    BUILD_SCRIPT: "./autogen.sh && ./configure --enable-firewalld && make -j"
 
 install-dep-00:
     stage: install-dep
     tags:
       - tstore00
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-01:
     stage: install-dep
     tags:
       - tstore01
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-02:
     stage: install-dep
     tags:
       - tstore02
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-03:
     stage: install-dep
     tags:
       - tstore03
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-04:
     stage: install-dep
     tags:
       - tstore04
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-05:
     stage: install-dep
     tags:
       - tstore05
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-06:
     stage: install-dep
     tags:
       - tstore06
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-07:
     stage: install-dep
     tags:
       - tstore07
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-08:
     stage: install-dep
     tags:
       - tstore08
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-09:
     stage: install-dep
     tags:
       - tstore09
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-10:
     stage: install-dep
     tags:
       - tstore10
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-11:
     stage: install-dep
     tags:
       - tstore11
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-12:
     stage: install-dep
     tags:
       - tstore12
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-13:
     stage: install-dep
     tags:
       - tstore13
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-14:
     stage: install-dep
     tags:
       - tstore14
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
 install-dep-15:
     stage: install-dep
     tags:
       - tstore15
     script:
-    - $INSTALL_DEP_SCRIPT 
+    - sh -c "$INSTALL_DEP_SCRIPT" 
 
-build-job:
+build-00:
     stage: build
+    tags:
+     - tstore00
     script:
-    - ./autogen.sh
-    - ./configure --enable-firewalld
-    - make -j
+    - sh -c "$BUILD_SCRIPT" 
+
+build-00:
+    stage: build
+    tags:
+     - tstore00
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-01:
+    stage: build
+    tags:
+     - tstore01
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-02:
+    stage: build
+    tags:
+     - tstore02
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-03:
+    stage: build
+    tags:
+     - tstore03
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-04:
+    stage: build
+    tags:
+     - tstore04
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-05:
+    stage: build
+    tags:
+     - tstore05
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-06:
+    stage: build
+    tags:
+     - tstore06
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-07:
+    stage: build
+    tags:
+     - tstore07
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-08:
+    stage: build
+    tags:
+     - tstore08
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-09:
+    stage: build
+    tags:
+     - tstore09
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-10:
+    stage: build
+    tags:
+     - tstore10
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-11:
+    stage: build
+    tags:
+     - tstore11
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-12:
+    stage: build
+    tags:
+     - tstore12
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-13:
+    stage: build
+    tags:
+     - tstore13
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-14:
+    stage: build
+    tags:
+     - tstore14
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
+build-15:
+    stage: build
+    tags:
+     - tstore15
+    script:
+    - sh -c "$BUILD_SCRIPT" 
+
