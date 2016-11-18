@@ -4,7 +4,7 @@ stages:
 - deploy
 
 variables:
-    INSTALL_DEP_SCRIPT: "echo 'hpcgrid3102' | su root -c ./srcipts/install-deps.sh"
+    INSTALL_DEP_SCRIPT: "echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh"
     BUILD_SCRIPT: "./autogen.sh && ./configure --enable-firewalld && make -j"
 
 install-dep-00:
