@@ -1,21 +1,123 @@
 stages:
 - install-dep
-- configure
 - build
 - deploy
 
-install-dep-job:
+install-dep-00:
     stage: install-dep
+    tags:
+      - tstore00
     script:
     - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
 
-configure-job:
-    stage: configure
+install-dep-01:
+    stage: install-dep
+    tags:
+      - tstore01
     script:
-    - ./autogen.sh
-    - ./configure --enable-firewalld
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-02:
+    stage: install-dep
+    tags:
+      - tstore02
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-03:
+    stage: install-dep
+    tags:
+      - tstore03
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-04:
+    stage: install-dep
+    tags:
+      - tstore04
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-05:
+    stage: install-dep
+    tags:
+      - tstore05
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-06:
+    stage: install-dep
+    tags:
+      - tstore06
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-07:
+    stage: install-dep
+    tags:
+      - tstore07
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-08:
+    stage: install-dep
+    tags:
+      - tstore08
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-09:
+    stage: install-dep
+    tags:
+      - tstore09
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-10:
+    stage: install-dep
+    tags:
+      - tstore10
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-11:
+    stage: install-dep
+    tags:
+      - tstore11
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-12:
+    stage: install-dep
+    tags:
+      - tstore12
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-13:
+    stage: install-dep
+    tags:
+      - tstore13
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-14:
+    stage: install-dep
+    tags:
+      - tstore14
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
+
+install-dep-15:
+    stage: install-dep
+    tags:
+      - tstore15
+    script:
+    - echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh
 
 build-job:
     stage: build
     script:
+    - ./autogen.sh
+    - ./configure --enable-firewalld
     - make -j
