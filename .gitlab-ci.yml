@@ -6,6 +6,7 @@ stages:
 variables:
     INSTALL_DEP_SCRIPT: "echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh"
     BUILD_SCRIPT: "./autogen.sh && ./configure --enable-firewalld && make -j"
+    DEPLOY_SCRIPT: "echo 'hpcgrid3102' | su root -c 'make install'"
 
 install-dep-00:
     stage: install-dep
@@ -237,4 +238,116 @@ build-15:
      - tstore15
     script:
     - sh -c "$BUILD_SCRIPT" 
+
+deploy-00:
+    stage: deploy
+    tags:
+     - tstore00
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-01:
+    stage: deploy
+    tags:
+     - tstore01
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-02:
+    stage: deploy
+    tags:
+     - tstore02
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-03:
+    stage: deploy
+    tags:
+     - tstore03
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-04:
+    stage: deploy
+    tags:
+     - tstore04
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-05:
+    stage: deploy
+    tags:
+     - tstore05
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-06:
+    stage: deploy
+    tags:
+     - tstore06
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-07:
+    stage: deploy
+    tags:
+     - tstore07
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-08:
+    stage: deploy
+    tags:
+     - tstore08
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-09:
+    stage: deploy
+    tags:
+     - tstore09
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-10:
+    stage: deploy
+    tags:
+     - tstore10
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-11:
+    stage: deploy
+    tags:
+     - tstore11
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-12:
+    stage: deploy
+    tags:
+     - tstore12
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-13:
+    stage: deploy
+    tags:
+     - tstore13
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-14:
+    stage: deploy
+    tags:
+     - tstore14
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
+
+deploy-15:
+    stage: deploy
+    tags:
+     - tstore15
+    script:
+    - sh -c "$DEPLOY_SCRIPT" 
 
