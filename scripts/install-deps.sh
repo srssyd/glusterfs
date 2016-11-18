@@ -1,3 +1,5 @@
+su root
+
 echo 'Begin to install epel.'
 
 yum -y install epel-release.noarch

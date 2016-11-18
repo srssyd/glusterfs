@@ -7,7 +7,7 @@ stages:
 install-dep-job:
     stage: install-dep
     script:
-    - ./scripts/install-deps.sh
+    - sudo ./scripts/install-deps.sh
 
 configure-job:
     stage: configure
