@@ -5,8 +5,8 @@ stages:
 
 variables:
     INSTALL_DEP_SCRIPT: "echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh"
-    BUILD_SCRIPT: "./autogen.sh && ./configure --enable-firewalld && make -j"
-    DEPLOY_SCRIPT: "echo 'hpcgrid3102' | su root -c 'make install && make gitclean'"
+    BUILD_SCRIPT: "./autogen.sh && ./configure --enable-firewalld && make -j && echo 'hpcgrid3102' | su root -c 'make install' "
+    DEPLOY_SCRIPT: "echo 'hpcgrid3102' | su root -c 'service glusterd start' "
 
 install-dep-00:
     stage: install-dep
