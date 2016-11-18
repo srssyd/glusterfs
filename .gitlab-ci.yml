@@ -1,18 +1,21 @@
 stages:
+- install-dep
 - configure
 - build
 - deploy
 
-configure_job:
-    before_script:
+install-dep-job:
+    stage: install-dep
+    script:
     - ./scripts/install-deps.sh
+
+configure-job:
     stage: configure
     script:
     - ./autogen.sh
     - ./configure --enable-firewalld
 
-build_job:
+build-job:
     stage: build
     script:
     - make -j
-
