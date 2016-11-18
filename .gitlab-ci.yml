@@ -1,0 +1,3 @@
+before_script:
+- ./scripts/install-deps.sh
+
