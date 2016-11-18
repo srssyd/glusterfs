@@ -1,12 +1,11 @@
-before_script:
-- ./scripts/install-deps.sh
-
 stages:
 - configure
 - build
 - deploy
 
 configure_job:
+    before_script:
+    - ./scripts/install-deps.sh
     stage: configure
     script:
     - ./autogen.sh
