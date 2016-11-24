@@ -157,6 +157,13 @@ cleanup-04:
     script:
     - sh -c "$CLEANUP_SCRIPT" 
 
+cleanup-05:
+    stage: cleanup
+    tags:
+     - tstore05
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
 cleanup-06:
     stage: cleanup
     tags:
