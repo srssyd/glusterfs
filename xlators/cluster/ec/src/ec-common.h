@@ -76,8 +76,8 @@ typedef enum {
 #define EC_STATE_HEAL_POST_INODELK_UNLOCK   217
 #define EC_STATE_HEAL_DISPATCH              218
 
-#define READ_PIPELINE_SIZE(fop)		(((ec_t *)((fop)->xl->private))->stripe_size * 10)
-#define READ_PIPELINE_END(fop)		((fop)->curr_off > (fop)->offset + (fop)->size)
+#define READ_PIPELINE_SIZE(fop)		(((ec_t *)((fop)->xl->private))->stripe_size * 16)
+#define READ_PIPELINE_END(fop)		((fop)->curr_off >= (fop)->offset + (fop)->size)
 #define READ_PIPELINE_REAL_SIZE(fop)    ((fop)->curr_off + READ_PIPELINE_SIZE((fop)) > (fop)->offset + (fop)->size ? (fop)->offset + (fop)->size - (fop)->curr_off : READ_PIPELINE_SIZE((fop)))
 
 gf_boolean_t ec_dispatch_one_retry (ec_fop_data_t *fop, ec_cbk_data_t **cbk);
