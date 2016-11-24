@@ -2513,7 +2513,8 @@ void ec_manager(ec_fop_data_t * fop, int32_t error)
 	__ec_manager(fop, error);
 }
 void ec_thpool_init(int num){
-    thpool = thpool_init(num);
+    if(thpool == NULL)
+        thpool = thpool_init(num);
 }
 inline int GET_REAL_PIPE_COUNT(ec_fop_data_t *fop)
 {

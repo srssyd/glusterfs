@@ -18,7 +18,7 @@
 #include "ec-worker.h"
 #include <sched.h>
 
-static worker_pool_t worker_pool;
+static worker_pool_t worker_pool = NULL;
 static uint32_t GfPow[EC_GF_SIZE << 1];
 static uint32_t GfLog[EC_GF_SIZE << 1];
 
@@ -38,7 +38,8 @@ void ec_method_initialize(void)
         GfPow[i + EC_GF_SIZE - 1] = GfPow[i];
         GfLog[GfPow[i] + EC_GF_SIZE - 1] = GfLog[GfPow[i]] = i;
     }
-    worker_pool = worker_pool_init(get_nprocs());
+    if(!worker_pool)
+        worker_pool = worker_pool_init(get_nprocs());
 }
 
 static uint32_t ec_method_mul(uint32_t a, uint32_t b)
@@ -97,7 +98,6 @@ size_t ec_method_encode(size_t size, uint32_t columns, uint32_t row, uint8_t * i
 {
     uint32_t i, j;
     uint8_t * in_ptr=in,*out_ptr=out;
-    //pthread_t *threads = malloc(sizeof(pthread_t)*processor_count);
     ec_encode_param_t *params = malloc(sizeof(ec_encode_param_t)*worker_pool->num_of_threads);
     size /= EC_METHOD_CHUNK_SIZE * columns;
     row++;
@@ -112,8 +112,6 @@ size_t ec_method_encode(size_t size, uint32_t columns, uint32_t row, uint8_t * i
             .out = out_ptr
         };
 
-        //printf("%u %x\n",param.size,param.in);
-       // printf("%x\n",in);
         in_ptr += EC_METHOD_CHUNK_SIZE * params[i].size * columns;
         out_ptr += EC_METHOD_CHUNK_SIZE * params[i].size;
     }
@@ -293,6 +291,7 @@ size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
             }
             for (j = 0; j < columns; j++) {
                 if (i != j) {
+
                     f = mtx[j][i];
                     for (k = 0; k < columns; k++) {
                         mtx[j][k] ^= ec_method_mul(mtx[i][k], f);
@@ -318,8 +317,6 @@ size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
             .in = in,
             .out = out
         };
-        //printf("%u %x\n",param.size,param.in);
-       // printf("%x\n",in);
         off += EC_METHOD_CHUNK_SIZE * params[i].size;
         out += EC_METHOD_CHUNK_SIZE * params[i].size * columns;
     }
@@ -335,5 +332,3 @@ size_t ec_method_decode(size_t size, uint32_t columns, uint32_t * rows,
 
     return size * EC_METHOD_CHUNK_SIZE * columns;
 }
-
-
