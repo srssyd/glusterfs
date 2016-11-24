@@ -1,10 +1,12 @@
 stages:
 - install-dep
+- cleanup
 - build
 - deploy
 
 variables:
     INSTALL_DEP_SCRIPT: "echo 'hpcgrid3102' | su root -c ./scripts/install-deps.sh"
+    CLEANUP_SCRIPT: "echo 'hpcgrid3102' | su root -c 'service glusterd stop' "
     BUILD_SCRIPT: "./autogen.sh && ./configure --enable-firewalld && make -j && echo 'hpcgrid3102' | su root -c 'make install' "
     DEPLOY_SCRIPT: "echo 'hpcgrid3102' | su root -c 'service glusterd start' "
 
@@ -120,12 +122,117 @@ install-dep-15:
     script:
     - sh -c "$INSTALL_DEP_SCRIPT" 
 
-build-00:
-    stage: build
+cleanup-00:
+    stage: cleanup
     tags:
      - tstore00
     script:
-    - sh -c "$BUILD_SCRIPT" 
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-01:
+    stage: cleanup
+    tags:
+     - tstore01
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-02:
+    stage: cleanup
+    tags:
+     - tstore02
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-03:
+    stage: cleanup
+    tags:
+     - tstore03
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-04:
+    stage: cleanup
+    tags:
+     - tstore04
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-06:
+    stage: cleanup
+    tags:
+     - tstore05
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-06:
+    stage: cleanup
+    tags:
+     - tstore06
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-07:
+    stage: cleanup
+    tags:
+     - tstore07
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-08:
+    stage: cleanup
+    tags:
+     - tstore08
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-09:
+    stage: cleanup
+    tags:
+     - tstore09
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-10:
+    stage: cleanup
+    tags:
+     - tstore10
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-11:
+    stage: cleanup
+    tags:
+     - tstore11
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-12:
+    stage: cleanup
+    tags:
+     - tstore12
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-13:
+    stage: cleanup
+    tags:
+     - tstore13
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-14:
+    stage: cleanup
+    tags:
+     - tstore14
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
+
+cleanup-15:
+    stage: cleanup
+    tags:
+     - tstore15
+    script:
+    - sh -c "$CLEANUP_SCRIPT" 
 
 build-00:
     stage: build
