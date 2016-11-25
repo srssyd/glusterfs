@@ -39,7 +39,7 @@ struct iobuf_init_config gf_iobuf_huge_config[] = {
         {1<<30,2}
 };
 
-#define HUGE_SIZE (1 * (1<<30))
+#define HUGE_SIZE (128 * (1<<20))
 #define HUGE_COUNT 4
 void *huge_area[HUGE_COUNT];
 gf_boolean_t area_used[HUGE_COUNT];
