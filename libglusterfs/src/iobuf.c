@@ -34,6 +34,18 @@ struct iobuf_init_config gf_iobuf_init_config[] = {
         {1 * 1024 * 1024, 2},
 };
 
+struct iobuf_init_config gf_iobuf_huge_config[] = {
+        {128 * (1<<20),32},
+        {1<<30,2}
+};
+
+#define HUGE_SIZE (1 * (1<<30))
+#define HUGE_COUNT 4
+void *huge_area[HUGE_COUNT];
+gf_boolean_t area_used[HUGE_COUNT];
+pthread_spinlock_t huge_lock;
+
+
 int
 gf_iobuf_get_arena_index (size_t page_size)
 {
@@ -358,6 +370,25 @@ out:
         return;
 }
 
+static void init_page(void *mem,int len,int page_size){
+        int i;
+        for(i=0;i<len/page_size;i++)
+                *(char *)(mem + i * page_size) = 0;
+}
+
+static void init_huge_memory(){
+        int i;
+
+        for(i=0;i<HUGE_COUNT;i++){
+                posix_memalign(&huge_area[i],64,HUGE_SIZE);
+                init_page(huge_area[i],HUGE_SIZE,1<<12);
+                area_used[i] = _gf_false;
+        }
+
+        pthread_spin_init(&huge_lock,PTHREAD_PROCESS_PRIVATE);
+
+}
+
 static void
 iobuf_create_stdalloc_arena (struct iobuf_pool *iobuf_pool)
 {
@@ -427,6 +458,7 @@ iobuf_pool_new (void)
                 arena_size += page_size * num_pages;
         }
 
+        init_huge_memory();
         /* Need an arena to handle all the bigger iobuf requests */
         iobuf_create_stdalloc_arena (iobuf_pool);
 
@@ -596,6 +628,7 @@ iobuf_get_from_stdalloc (struct iobuf_pool *iobuf_pool, size_t page_size)
         struct iobuf_arena *iobuf_arena = NULL;
         struct iobuf_arena *trav        = NULL;
         int                 ret         = -1;
+        int i;
 
         /* The first arena in the 'MAX-INDEX' will always be used for misc */
         list_for_each_entry (trav, &iobuf_pool->arenas[IOBUF_ARENA_MAX_INDEX],
@@ -608,9 +641,25 @@ iobuf_get_from_stdalloc (struct iobuf_pool *iobuf_pool, size_t page_size)
         if (!iobuf)
                 goto out;
 
+
         /* 4096 is the alignment */
-        iobuf->free_ptr = GF_CALLOC (1, ((page_size + GF_IOBUF_ALIGN_SIZE) - 1),
-                                     gf_common_mt_char);
+        if(page_size == HUGE_SIZE) {
+                pthread_spin_lock(&huge_lock);
+                for (i = 0; i < HUGE_COUNT; i++)
+                        if (!area_used[i]) {
+                                area_used[i] = _gf_true;
+                                iobuf->free_ptr = huge_area[i];
+                                break;
+                        }
+
+                pthread_spin_unlock(&huge_lock);
+                if (i == HUGE_COUNT)
+                        iobuf->free_ptr = GF_CALLOC (1, ((page_size + GF_IOBUF_ALIGN_SIZE) - 1),
+                                                     gf_common_mt_char);
+        }else
+                iobuf->free_ptr = GF_CALLOC (1, ((page_size + GF_IOBUF_ALIGN_SIZE) - 1),
+                                             gf_common_mt_char);
+
         if (!iobuf->free_ptr)
                 goto out;
 
@@ -719,6 +768,7 @@ __iobuf_put (struct iobuf *iobuf, struct iobuf_arena *iobuf_arena)
 {
         struct iobuf_pool *iobuf_pool = NULL;
         int                index      = 0;
+        int i;
 
         GF_VALIDATE_OR_GOTO ("iobuf", iobuf_arena, out);
         GF_VALIDATE_OR_GOTO ("iobuf", iobuf, out);
@@ -732,7 +782,15 @@ __iobuf_put (struct iobuf *iobuf, struct iobuf_arena *iobuf_arena)
 
                 /* free up properly without bothering about lists and all */
                 LOCK_DESTROY (&iobuf->lock);
-                GF_FREE (iobuf->free_ptr);
+                pthread_spin_lock(&huge_lock);
+                for(i=0;i<HUGE_COUNT;i++)
+                        if(iobuf->free_ptr == huge_area[i]){
+                                area_used[i] = _gf_false;
+                                break;
+                        }
+                pthread_spin_unlock(&huge_lock);
+                if(i==HUGE_COUNT)
+                        GF_FREE (iobuf->free_ptr);
                 GF_FREE (iobuf);
                 return;
         }

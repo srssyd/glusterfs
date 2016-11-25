@@ -2518,6 +2518,9 @@ void ec_thpool_init(int num){
 }
 inline int GET_REAL_PIPE_COUNT(ec_fop_data_t *fop)
 {
+
+    return (fop->vector[0].iov_len + THR_PIPELINE-1)/THR_PIPELINE;
+    /*
 	if (fop->vector[0].iov_len < THR_PIPELINE) {
 #if AUTO_PIPE
 		return 1;
@@ -2528,4 +2531,5 @@ inline int GET_REAL_PIPE_COUNT(ec_fop_data_t *fop)
 	else {
 		return PIPE_COUNT;
 	}
+     */
 }
